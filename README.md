@@ -6,7 +6,7 @@ A portfolio allocation optimization app. Using a Markowitz portfolio optimizer t
 - [Installation](#installation)
 - [Usage](#usage)
 - [Support](#support)
-- [File Structure](#FS-File-Structure)
+- [File Structure](#File-Structure)
 
 ## Installation
 
@@ -20,7 +20,7 @@ A portfolio allocation optimization app. Using a Markowitz portfolio optimizer t
 
 Please [open an issue](https://github.com/DrewsCodeLife/portfolio-lab/issues/new) for support.
 
-## :FS: File Structure
+## File Structure
 
 ```
 .
