@@ -26,5 +26,6 @@ Please [open an issue](https://github.com/DrewsCodeLife/portfolio-lab/issues/new
 .
 ├── Documentation
 │   ├── Data Science Capstone Sources.docx
+|   └── data.md
 └── README.md
 ```
