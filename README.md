@@ -24,8 +24,13 @@ Please [open an issue](https://github.com/DrewsCodeLife/portfolio-lab/issues/new
 
 ```
 .
-├── Documentation
+├── documentation/
 │   ├── Data Science Capstone Sources.docx
 |   └── data.md
+├── data/
+|   ├── used/
+|   └── raw/
+├── src/
+|   └── fetch_vbmfx.py
 └── README.md
 ```
