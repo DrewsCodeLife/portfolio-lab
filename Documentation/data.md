@@ -14,3 +14,5 @@ The world of financial assets is vast and complex. Naturally, we must define a s
 | Real Assets / REITs | RWR | Seeks to provide exposure to publically traded REIT securities in the U.S. |
 | Cash / Cash equivalents | BIL | The bloomberg 1-3 month Treasury bond ETF. Closely approximates HYSAs and money market funds. |
 | Cash / Cash equivalents | DTB3 | 3-month U.S. Treasury bill rate published by the Federal Reserve. Clean, government-sourced benchmark for cash-like returns. |
+
+[Kaggle Huge Stock Market Dataset](https://www.kaggle.com/datasets/borismarjanovic/price-volume-data-for-all-us-stocks-etfs?resource=download)
