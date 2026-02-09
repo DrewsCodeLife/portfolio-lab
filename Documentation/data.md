@@ -15,4 +15,8 @@ The world of financial assets is vast and complex. Naturally, we must define a s
 | Cash / Cash equivalents | BIL | The bloomberg 1-3 month Treasury bond ETF. Closely approximates HYSAs and money market funds. |
 | Cash / Cash equivalents | DTB3 | 3-month U.S. Treasury bill rate published by the Federal Reserve. Clean, government-sourced benchmark for cash-like returns. |
 
-[Kaggle Huge Stock Market Dataset](https://www.kaggle.com/datasets/borismarjanovic/price-volume-data-for-all-us-stocks-etfs?resource=download)
+SPY, VTI, EFA, VXUS, BND, VNQ, RWR, and BIL were collected from: [Kaggle Huge Stock Market Dataset](https://www.kaggle.com/datasets/borismarjanovic/price-volume-data-for-all-us-stocks-etfs?resource=download)
+
+DTB3 was collected from [FRED](https://fred.stlouisfed.org/series/DTB3)
+
+VBMFX was scraped from Yahoo Finance using the yfinance python package, the script for this fetch operation is available in `src/` as "fetch_vbmfx.py"
