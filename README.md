@@ -31,6 +31,6 @@ Please [open an issue](https://github.com/DrewsCodeLife/portfolio-lab/issues/new
 |   ├── used/
 |   └── raw/
 ├── src/
-|   └── fetch_vbmfx.py
+|   └── fetch_yahoo.py
 └── README.md
 ```
