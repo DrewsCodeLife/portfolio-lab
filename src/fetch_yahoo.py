@@ -12,8 +12,8 @@ import yfinance as yf
 import pandas as pd
 import time
 
-FETCH_BIL   = True
-FETCH_BND   = False
+FETCH_BIL   = False
+FETCH_BND   = True
 FETCH_EFA   = False
 FETCH_RWR   = False
 FETCH_SPY   = False
@@ -27,66 +27,64 @@ if FETCH_BIL:
   data = yf.download("BIL", keepna=True, interval='1d')
   data.to_csv("bil.csv")
 
-print("Waiting...")
-time.sleep(60)
-
 if FETCH_BND:
+  print("Waiting...")
+  time.sleep(60)
   print("Downloading BND...")
   data = yf.download("BND", keepna=True, interval='1d')
   data.to_csv("bnd.csv")
 
-print("Waiting...")
-time.sleep(60)
 
 if FETCH_EFA:
+  print("Waiting...")
+  time.sleep(60)
   print("Downloading EFA...")
   data = yf.download("EFA", keepna=True, interval='1d')
   data.to_csv("efa.csv")
 
-print("Waiting...")
-time.sleep(60)
 
 if FETCH_RWR:
+  print("Waiting...")
+  time.sleep(60)
   print("Downloading RWR...")
   data = yf.download("RWR", keepna=True, interval='1d')
   data.to_csv("rwr.csv")
 
-print("Waiting...")
-time.sleep(60)
 
 if FETCH_SPY:
+  print("Waiting...")
+  time.sleep(60)
   print("Downloading SPY...")
   data = yf.download("SPY", keepna=True, interval='1d')
   data.to_csv("spy.csv")
 
-print("Waiting...")
-time.sleep(60)
-
 if FETCH_VBMFX:
+  print("Waiting...")
+  time.sleep(60)
   print("Downloading VBMFX...")
   data = yf.download("VBMFX", keepna=True, interval='1d')
   data.to_csv("vbmfx.csv")
 
-print("Waiting...")
-time.sleep(60)
 
 if FETCH_VNQ:
+  print("Waiting...")
+  time.sleep(60)
   print("Downloading VNQ...")
   data = yf.download("VNQ", keepna=True, interval='1d')
   data.to_csv("vnq.csv")
 
-print("Waiting...")
-time.sleep(60)
 
 if FETCH_VTI:
+  print("Waiting...")
+  time.sleep(60)
   print("Downloading VTI...")
   data = yf.download("VTI", keepna=True, interval='1d')
   data.to_csv("vti.csv")
 
-print("Waiting...")
-time.sleep(60)
 
 if FETCH_VXUS:
+  print("Waiting...")
+  time.sleep(60)
   print("Downloading VXUS...")
   data = yf.download("VXUS", keepna=True, interval='1d')
   data.to_csv("vxus.csv")
