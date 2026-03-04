@@ -5,7 +5,7 @@ A portfolio allocation optimization app. Using a Markowitz portfolio optimizer t
 
 - [Installation](#installation)
 - [Usage](#usage)
-- [Support](#support)
+- [TODO](#TODO)
 - [File Structure](#File-Structure)
 
 ## Installation
@@ -16,9 +16,10 @@ A portfolio allocation optimization app. Using a Markowitz portfolio optimizer t
 
 *empty for now*
 
-## Support
+## TODO
 
-Please [open an issue](https://github.com/DrewsCodeLife/portfolio-lab/issues/new) for support.
+* Proper agnostic pathing
+* requirements.txt for easy venv creation
 
 ## File Structure
 
