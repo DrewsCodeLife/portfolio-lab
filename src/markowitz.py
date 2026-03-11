@@ -260,6 +260,8 @@ def build_long_only_frontier(mu, Sigma, n_points=50, w_max=None, solver=None):
             # Infeasible target return for the constraints, skip it.
             continue
 
+        # Status is actually useless here, because if w was infeasible or unbounded then w was None.
+        #   status is always optimal by this line
         stats = compute_portfolio_stats(mu, Sigma, w, annualize=True)
         frontier.append({
             "target_R": float(R_target),
