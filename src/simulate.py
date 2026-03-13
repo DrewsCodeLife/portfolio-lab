@@ -12,8 +12,11 @@ classes = ["US_Equity", "International", "Bonds", "REITs", "Cash"]
 
 # This line is from ChatGPT, weights are saved as space separated str
 pf_series = df["weights"].apply(lambda s: np.fromstring(s.strip("[]"), sep=" "))
+pf_arr = pf_series.to_numpy()
 
-portfolios = np.vstack(pf_series.to_numpy())  # shape: (n_portfolios, 5)
+max_risk = [1, 0, 0, 0, 0]
+
+portfolios = np.vstack([*pf_arr, max_risk])  # shape: (n_portfolios, 5)
 
 # Input values are proportions of invested wealth, so we can trivially multiply.
 portfolios = portfolios * STARTING_WEALTH

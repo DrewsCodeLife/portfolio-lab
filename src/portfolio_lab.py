@@ -59,8 +59,6 @@ MEDIUM_TEXT_PAD = MEDIUM_TEXT_SIZE * 2
 LARGE_TEXT_PAD  = LARGE_TEXT_SIZE * 2
 
 TRADING_DAYS = 252
-
-W_MIN = 0.00
 # |---------------------------------- Constants ----------------------------------|
 
 
@@ -83,6 +81,13 @@ class PortfolioLab:
                 "Real Assets"               : 20.0,
                 "Cash Equivalents"          : 20.0
             },
+            "user_portfolio_fractional": {
+                "U.S. Equities"             : 0.2,
+                "International Equities"    : 0.2,
+                "Fixed Income"              : 0.2,
+                "Real Assets"               : 0.2,
+                "Cash Equivalents"          : 0.2
+            },
             # 1 Source of truth for column order (from daily_returns.csv)
             "asset_names": [
                 "U.S. Equities",
@@ -95,8 +100,11 @@ class PortfolioLab:
             "has_run"           : False,
             "lookback"          : 252,
             "mu"                : None, # daily
+            "R_max"             : None, # daily
             "sigma"             : None, # daily
             "req_return_daily"  : None, # Converted to daily from UI annualized request
+            "eps"               : 1e-12,
+            "w_min"             : 0.01,
         }
         # |------------------------------ Internal Model ---------------------------------|
 
@@ -154,6 +162,9 @@ class PortfolioLab:
         # We've loaded the data and lookback defaults to 252, so this should be safe.
         #   We're going to want the initial values stored so we can clamp annualized returns
         self._estimate_mu_sigma()
+
+        # Initialize the desired return to 50% of theoretical max
+        self._update_desired_ret(sender=None, app_data=0.5)
         # |----------------------------- Window Initialization -----------------------------|
 
 
@@ -209,40 +220,47 @@ class PortfolioLab:
                 with dpg.group():
                     in_val = self.state['user_portfolio']['U.S. Equities']
                     rec_val = pf_val * self.state['rec_portfolio']['U.S. Equities']
-                    change, high = self._overunder(in_val, rec_val)
+
+                    frac_in_val = self.state['user_portfolio_fractional']['U.S. Equities']
+                    frac_rec_val = self.state['rec_portfolio']['U.S. Equities']
+                    drift, high = self._overunder(frac_in_val, frac_rec_val)
 
                     self._draw_card(
                         tag="us_equities",
                         label=f"IN: ${in_val} / REC: ${rec_val:.2f}",
-                        change=change,
+                        drift=drift,
                         high=high,
                         callback=self._us_class_update
                         )
                 dpg.add_spacer(width=self.gap_x)
-
                 in_val = self.state['user_portfolio']['International Equities']
                 rec_val = pf_val * self.state['rec_portfolio']['International Equities']
-                change, high = self._overunder(in_val, rec_val)
+
+                frac_in_val = self.state['user_portfolio_fractional']['International Equities']
+                frac_rec_val = self.state['rec_portfolio']['International Equities']
+                drift, high = self._overunder(frac_in_val, frac_rec_val)
 
                 with dpg.group():
                     self._draw_card(
                         tag="int_equities",
                         label=f"IN: ${in_val} / REC: ${rec_val:.2f}",
-                        change=change,
+                        drift=drift,
                         high=high,
                         callback=self._inter_class_update
                         )
                 dpg.add_spacer(width=self.gap_x)
-
                 in_val = self.state['user_portfolio']['Fixed Income']
                 rec_val = pf_val * self.state['rec_portfolio']['Fixed Income']
-                change, high = self._overunder(in_val, rec_val)
+
+                frac_in_val = self.state['user_portfolio_fractional']['Fixed Income']
+                frac_rec_val = self.state['rec_portfolio']['Fixed Income']
+                drift, high = self._overunder(frac_in_val, frac_rec_val)
 
                 with dpg.group():
                     self._draw_card(
                         tag="fixed_income",
                         label=f"IN: ${in_val} / REC: ${rec_val:.2f}",
-                        change=change,
+                        drift=drift,
                         high=high,
                         callback=self._fixed_class_update
                         )
@@ -262,30 +280,34 @@ class PortfolioLab:
             # Row 2 (2 cards)
             with dpg.group(horizontal=True):
                 dpg.add_spacer(width=self.outer_pad_x + (self.card_w / 3))
-
                 in_val = self.state['user_portfolio']['Real Assets']
                 rec_val = pf_val * self.state['rec_portfolio']['Real Assets']
-                change, high = self._overunder(in_val, rec_val)
+
+                frac_in_val = self.state['user_portfolio_fractional']['Real Assets']
+                frac_rec_val = self.state['rec_portfolio']['Real Assets']
+                drift, high = self._overunder(frac_in_val, frac_rec_val)
 
                 with dpg.group():
                     self._draw_card(
                         tag="real_assets",
                         label=f"IN: ${in_val} / REC: ${rec_val:.2f}",
-                        change=change,
+                        drift=drift,
                         high=high,
                         callback=self._reits_class_update
                         )
                 dpg.add_spacer(width=(self.gap_x + (self.card_w / 3)))
-
                 in_val = self.state['user_portfolio']['Cash Equivalents']
                 rec_val = pf_val * self.state['rec_portfolio']['Cash Equivalents']
-                change, high = self._overunder(in_val, rec_val)
+
+                frac_in_val = self.state['user_portfolio_fractional']['Cash Equivalents']
+                frac_rec_val = self.state['rec_portfolio']['Cash Equivalents']
+                drift, high = self._overunder(frac_in_val, frac_rec_val)
 
                 with dpg.group():
                     self._draw_card(
                         tag="cash_equivalents",
                         label=f"IN: ${in_val} / REC: ${rec_val:.2f}",
-                        change=change,
+                        drift=drift,
                         high=high,
                         callback=self._cash_class_update
                         )
@@ -337,14 +359,33 @@ class PortfolioLab:
                     default_value=1,
                     callback=self._sim_period_update,
                     )
+
                 dpg.add_slider_float(
-                    label="Annualized Growth Percentage",
+                    label="Low -> High Risk",
                     tag="desired_ret",
-                    min_value=0.01,
-                    max_value=0.2,
-                    default_value=1.0,
+                    min_value=0.05,
+                    max_value=1.0,
+                    default_value=0.5,
                     callback=self._update_desired_ret,
                     )
+                dpg.add_slider_double(
+                    label="Model Minimum Investment",
+                    tag="model_min_investment",
+                    min_value=0.00,
+                    max_value=0.2,
+                    default_value=0.01,
+                    callback=self._update_min_investment
+                )
+                dpg.add_slider_double(
+                    label="Model Return Margin",
+                    tag="model_return_margin",
+                    min_value=1e-12,
+                    max_value=1e-3,
+                    default_value=1e-12,
+                    clamped=True,
+                    format="%.12f",
+                    callback=self._update_return_margin
+                )
                 dpg.add_text(default_value=self.state['portfolio_value'], tag='pv_value')
                 dpg.add_button(label="Optimize Portfolio", callback=self._construct_portfolio)
 
@@ -370,7 +411,7 @@ class PortfolioLab:
         self.rounding = int(min(self.card_w, self.card_h) * CARD_ROUNDING)
 
 
-    def _draw_card(self, tag, label, change, high, callback):
+    def _draw_card(self, tag, label, drift, high, callback):
         with dpg.child_window(
             tag=tag + '_window_1',
             width=self.card_w,
@@ -414,11 +455,11 @@ class PortfolioLab:
                         pass
                     elif high:
                         # More than 5% over contributed
-                        bl_label = f"OVERPARTICIPATING: {change:.3f}%"
+                        bl_label = f"OVERPARTICIPATING: {drift:.3f}%"
                         pass
                     else:
                         # Less then 95% under contributed
-                        bl_label = f"UNDERPARTICIPATING: {change:.3f}%"
+                        bl_label = f"UNDERPARTICIPATING: {drift:.3f}%"
 
                     dpg.add_text(
                         default_value=bl_label,
@@ -434,7 +475,8 @@ class PortfolioLab:
                         width=self.card_w / 3,
                         step=0,
                         step_fast=0,
-                        default_value=0.0,
+                        default_value=0.00,
+                        min_value=0.00,
                         callback=callback,
                         )
 
@@ -459,9 +501,6 @@ class PortfolioLab:
         # Need to recalculate, lookback changed
         self._estimate_mu_sigma()
 
-        # Since mu has changed, so have our clamps!
-        self.clamp_returns()
-
 
     def _sim_period_update(self, sender, app_data, user_data):
         cur_lookback = dpg.get_value("lookback")
@@ -475,28 +514,7 @@ class PortfolioLab:
 
 
     def _us_class_update(self, sender, app_data):
-        # To keep the portfolio value synchronized, reduce by old value, increase by new value
-        old_pv = self.state['portfolio_value']
-        new_pv = old_pv - self.state['user_portfolio']['U.S. Equities'] + app_data
-        self.state['portfolio_value'] = new_pv
-
         self.state['user_portfolio']['U.S. Equities'] = app_data
-
-        dpg.configure_item('pv_value', default_value=new_pv)
-
-        rec_val = new_pv * self.state['rec_portfolio']['U.S. Equities']
-
-        change, high = self._overunder(app_data, rec_val)
-
-        if high is None:
-            dpg.configure_item('us_equities_participation', default_value=f"ASSET CLASS BALANCED!")
-        elif high:
-            dpg.configure_item('us_equities_participation', default_value=f"OVERPARTICIPATING: {change:.3f}%")
-        else:
-            dpg.configure_item('us_equities_participation', default_value=f"UNDERPARTICIPATING: {change:.3f}%")
-
-        dpg.configure_item("us_equities_main", default_value=f"IN: ${app_data} / REC: ${rec_val:.2f}")
-
         self._update_all_card_states()
 
 
@@ -519,9 +537,21 @@ class PortfolioLab:
         self.state['user_portfolio']['Cash Equivalents'] = app_data
         self._update_all_card_states()
 
+
     def _update_desired_ret(self, sender, app_data):
-        # Convert expected linear annual return to daily linear return, convert to decimal
-        self.state['req_return_daily'] = app_data / (252 * 100)
+        # Convert abstracted risk level to real return value
+        mu = self.state['mu']
+        mu_max = float(mu.max())
+
+        # Max daily return should be mu_max * (max single contribution) - (3 * offset) / 2
+        #   - max single contribution is the most that a single asset class can participate
+        #       accounting for the minimum investment requested of the model
+        #   - Offset is a small offset because numbers get weird near the margin
+        #       3*1e-12/2 just seems to be feasible from trial and error.
+        R_max = self.state['R_max'] = ((mu_max * (1.0 - 4 * self.state['w_min'])) - self.state['eps'] * (3/2))
+
+        self.state['req_return_daily'] = app_data * R_max
+
 
     def _construct_portfolio(self, sender, app_data):
         if DEBUG_OUTPUT:
@@ -544,103 +574,199 @@ class PortfolioLab:
         else:
             print("Target return unsolvable. Or potentially invalid R_target. Future pull up popup. For now crash")
             exit(-1)
+
+    def _update_return_margin(self, sender, app_data):
+        self.state["eps"] = app_data
+
+    def _update_min_investment(self, sender, app_data):
+        self.state["w_min"] = app_data
     # |----------------------------- Callback Functions --------------------------------|
 
 
     # |------------------------------ Helper Functions ---------------------------------|
     # |------------------------------- INTERNALIZED ----------------------------------|
-    def _overunder(self, in_val, rec_val):
-        if in_val is None:
-            in_val = rec_val
+    def _overunder(self, frac_in_val, frac_rec_val):
+        if frac_in_val is None:
+            frac_in_val = frac_rec_val
 
-        change = -1
+        drift = frac_in_val - frac_rec_val
         high = None
-        if in_val > rec_val * 1.05:
-            # change - int(change) = inverse truncation.
-            # * 100 = percentage increase from rec_val to in_val
-            change = ((in_val - rec_val) / rec_val) * 100
+        if drift > 0.05:
             high = True
-        elif in_val < rec_val * 0.95:
-            change = ((rec_val - in_val) / rec_val) * 100
+        elif drift < -0.05:
             high = False
-        return change, high
+        return drift * 100, high  # Convert drift to percent
 
 
     def _update_all_card_states(self):
         pf_ref = self.state['user_portfolio']
+        frac_pf_ref = self.state['user_portfolio_fractional']
         rec_ref = self.state['rec_portfolio']
         pf_val = self.state['portfolio_value'] = sum(self.state['user_portfolio'].values())
+
+        if pf_val <= 0.00:
+            # Definitely need to warn the user somehow and abort the update,
+            #   they need to input a portfolio larger than $0...
+            # For now just freak out in the console
+            if DEBUG_OUTPUT:
+                print("WHY WOULD YOU OPEN A PORTFOLIO OF $0 YOU ABSOLUTE MONGOLOID")
 
         dpg.configure_item('pv_value', default_value=pf_val)
 
         # |------------------------------ U.S. Equities ------------------------------|
         in_val = pf_ref['U.S. Equities']
-        rec_val = pf_val * rec_ref['U.S. Equities']
-        dpg.configure_item('us_equities_main', default_value=f"IN: ${in_val} / REC: ${rec_val:.2f}")
+
+        if in_val > 0.00:
+            frac_pf_ref['U.S. Equities'] = in_val / pf_val
+        else:
+            frac_pf_ref['U.S. Equities'] = 0.00
+
+        if rec_ref['U.S. Equities'] == 0.00:
+            if in_val > 0.00:
+                dpg.configure_item('us_equities_participation', default_value=f"OVERPARTICIPATING")
+            else:
+                dpg.configure_item('us_equities_participation', default_value=f"ASSET CLASS BALANCED!")
+            rec_val = 0.00
+            dpg.configure_item('us_equities_main', default_value=f"IN: ${in_val} / REC: $0")
+        else:
+            rec_val = pf_val * rec_ref['U.S. Equities']
+            frac_rec_val = rec_ref['U.S. Equities']
+            frac_in_val = frac_pf_ref['U.S. Equities']
+
+            change, high = self._overunder(frac_in_val, frac_rec_val)
+            if high is None:
+                dpg.configure_item('us_equities_participation', default_value=f"ASSET CLASS BALANCED!")
+            elif high:
+                dpg.configure_item('us_equities_participation', default_value=f"OVERPARTICIPATING: {change:.3f}%")
+            else:
+                dpg.configure_item('us_equities_participation', default_value=f"UNDERPARTICIPATING: {change:.3f}%")
+
+            dpg.configure_item('us_equities_main', default_value=f"IN: ${in_val} / REC: ${rec_val:.2f}")
         # |------------------------------ U.S. Equities ------------------------------|
 
         # |------------------------- International Equities -------------------------|
         in_val = pf_ref['International Equities']
-        rec_val = pf_val * rec_ref['International Equities']
 
-        change, high = self._overunder(in_val, rec_val)
-
-        if high is None:
-            dpg.configure_item('int_equities_participation', default_value=f"ASSET CLASS BALANCED!")
-        elif high:
-            dpg.configure_item('int_equities_participation', default_value=f"OVERPARTICIPATING: {change:.3f}%")
+        if in_val > 0.00:
+            frac_pf_ref['International Equities'] = in_val / pf_val
         else:
-            dpg.configure_item('int_equities_participation', default_value=f"UNDERPARTICIPATING: {change:.3f}%")
+            frac_pf_ref['International Equities'] = 0.00
 
-        dpg.configure_item('int_equities_main', default_value=f"IN: ${in_val} / REC: ${rec_val:.2f}")
+        if rec_ref['International Equities'] == 0.00:
+            if in_val > 0.00:
+                dpg.configure_item('int_equities_participation', default_value=f"OVERPARTICIPATING")
+            else:
+                dpg.configure_item('int_equities_participation', default_value=f"ASSET CLASS BALANCED!")
+            rec_val = 0.00
+            dpg.configure_item('int_equities_main', default_value=f"IN: ${in_val} / REC: $0")
+        else:
+            rec_val = pf_val * rec_ref['International Equities']
+            frac_rec_val = rec_ref['International Equities']
+            frac_in_val = frac_pf_ref['International Equities']
+
+            change, high = self._overunder(frac_rec_val, frac_in_val)
+            if high is None:
+                dpg.configure_item('int_equities_participation', default_value=f"ASSET CLASS BALANCED!")
+            elif high:
+                dpg.configure_item('int_equities_participation', default_value=f"OVERPARTICIPATING: {change:.3f}%")
+            else:
+                dpg.configure_item('int_equities_participation', default_value=f"UNDERPARTICIPATING: {change:.3f}%")
+
+            dpg.configure_item('int_equities_main', default_value=f"IN: ${in_val} / REC: ${rec_val:.2f}")
         # |------------------------- International Equities -------------------------|
 
         # |------------------------------ Fixed Income ------------------------------|
         in_val = pf_ref['Fixed Income']
-        rec_val = pf_val * rec_ref['Fixed Income']
 
-        change, high = self._overunder(in_val, rec_val)
-
-        if high is None:
-            dpg.configure_item('fixed_income_participation', default_value=f"ASSET CLASS BALANCED!")
-        elif high:
-            dpg.configure_item('fixed_income_participation', default_value=f"OVERPARTICIPATING: {change:.3f}%")
+        if in_val > 0.00:
+            frac_pf_ref['Fixed Income'] = in_val / pf_val
         else:
-            dpg.configure_item('fixed_income_participation', default_value=f"UNDERPARTICIPATING: {change:.3f}%")
+            frac_pf_ref['Fixed Income'] = 0.00
 
-        dpg.configure_item('fixed_income_main', default_value=f"IN: ${in_val} / REC: ${rec_val:.2f}")
+        if rec_ref['Fixed Income'] == 0.00:
+            if in_val > 0.00:
+                dpg.configure_item('fixed_income_participation', default_value=f"OVERPARTICIPATING")
+            else:
+                dpg.configure_item('fixed_income_participation', default_value=f"ASSET CLASS BALANCED!")
+            rec_val = 0.00
+            dpg.configure_item('fixed_income_main', default_value=f"IN: ${in_val} / REC: $0")
+        else:
+            rec_val = pf_val * rec_ref['Fixed Income']
+            frac_rec_val = rec_ref['Fixed Income']
+            frac_in_val = frac_pf_ref["Fixed Income"]
+
+            change, high = self._overunder(frac_in_val, frac_rec_val)
+            if high is None:
+                dpg.configure_item('fixed_income_participation', default_value=f"ASSET CLASS BALANCED!")
+            elif high:
+                dpg.configure_item('fixed_income_participation', default_value=f"OVERPARTICIPATING: {change:.3f}%")
+            else:
+                dpg.configure_item('fixed_income_participation', default_value=f"UNDERPARTICIPATING: {change:.3f}%")
+
+            dpg.configure_item('fixed_income_main', default_value=f"IN: ${in_val} / REC: ${rec_val:.2f}")
         # |------------------------------ Fixed Income ------------------------------|
 
         # |------------------------------ Real Assets ------------------------------|
         in_val = pf_ref['Real Assets']
-        rec_val = pf_val * rec_ref['Real Assets']
 
-        change, high = self._overunder(in_val, rec_val)
-
-        if high is None:
-            dpg.configure_item('real_assets_participation', default_value=f"ASSET CLASS BALANCED!")
-        elif high:
-            dpg.configure_item('real_assets_participation', default_value=f"OVERPARTICIPATING: {change:.3f}%")
+        if in_val > 0.00:
+            frac_pf_ref['Real Assets'] = in_val / pf_val
         else:
-            dpg.configure_item('real_assets_participation', default_value=f"UNDERPARTICIPATING: {change:.3f}%")
+            frac_pf_ref['Real Assets'] = 0.00
 
-        dpg.configure_item('real_assets_main', default_value=f"IN: ${in_val} / REC: ${rec_val:.2f}")
+        if rec_ref['Real Assets'] == 0.00:
+            if in_val > 0.00:
+                dpg.configure_item('real_assets_participation', default_value=f"OVERPARTICIPATING")
+            else:
+                dpg.configure_item('real_assets_participation', default_value=f"ASSET CLASS BALANCED!")
+            rec_val = 0.00
+            dpg.configure_item('real_assets_main', default_value=f"IN: ${in_val} / REC: $0")
+        else:
+            rec_val = pf_val * rec_ref['Real Assets']
+            frac_rec_val = rec_ref['Real Assets']
+            frac_in_val = frac_pf_ref['Real Assets']
+
+            change, high = self._overunder(frac_in_val, frac_rec_val)
+            if high is None:
+                dpg.configure_item('real_assets_participation', default_value=f"ASSET CLASS BALANCED!")
+            elif high:
+                dpg.configure_item('real_assets_participation', default_value=f"OVERPARTICIPATING: {change:.3f}%")
+            else:
+                dpg.configure_item('real_assets_participation', default_value=f"UNDERPARTICIPATING: {change:.3f}%")
+
+            dpg.configure_item('real_assets_main', default_value=f"IN: ${in_val} / REC: ${rec_val:.2f}")
         # |------------------------------ Real Assets ------------------------------|
 
         # |--------------------------- Cash Equivalents ---------------------------|
         in_val = pf_ref['Cash Equivalents']
-        rec_val = pf_val * rec_ref['Cash Equivalents']
 
-        change, high = self._overunder(in_val, rec_val)
-
-        if high is None:
-            dpg.configure_item('cash_equivalents_participation', default_value=f"ASSET CLASS BALANCED!")
-        elif high:
-            dpg.configure_item('cash_equivalents_participation', default_value=f"OVERPARTICIPATING: {change:.3f}%")
+        if in_val > 0.00:
+            frac_pf_ref['Cash Equivalents'] = in_val / pf_val
         else:
-            dpg.configure_item('cash_equivalents_participation', default_value=f"UNDERPARTICIPATING: {change:.3f}%")
+            frac_pf_ref['Cash Equivalents'] = 0.00
 
-        dpg.configure_item('cash_equivalents_main', default_value=f"IN: ${in_val} / REC: ${rec_val:.2f}")
+        if rec_ref['Cash Equivalents'] == 0.00:
+            if in_val > 0.00:
+                dpg.configure_item('cash_equivalents_participation', default_value=f"OVERPARTICIPATING")
+            else:
+                dpg.configure_item('cash_equivalents_participation', default_value=f"ASSET CLASS BALANCED!")
+            rec_val = 0.00
+            dpg.configure_item('cash_equivalents_main', default_value=f"IN: ${in_val} / REC: $0")
+        else:
+            rec_val = pf_val * rec_ref['Cash Equivalents']
+            frac_rec_val = rec_ref['Cash Equivalents']
+            frac_in_val = frac_pf_ref['Cash Equivalents']
+
+            change, high = self._overunder(frac_in_val, frac_rec_val)
+
+            if high is None:
+                dpg.configure_item('cash_equivalents_participation', default_value=f"ASSET CLASS BALANCED!")
+            elif high:
+                dpg.configure_item('cash_equivalents_participation', default_value=f"OVERPARTICIPATING: {change:.3f}%")
+            else:
+                dpg.configure_item('cash_equivalents_participation', default_value=f"UNDERPARTICIPATING: {change:.3f}%")
+
+            dpg.configure_item('cash_equivalents_main', default_value=f"IN: ${in_val} / REC: ${rec_val:.2f}")
         # |--------------------------- Cash Equivalents ---------------------------|
 
 
@@ -653,8 +779,9 @@ class PortfolioLab:
         if lookback is not None:
           local_data = self.returns.iloc[-lookback:]
         else:
-          # @TODO Error handle
-          print("Error: Lookback was None")
+          # Shouldn't be possible, for now just output
+          if DEBUG_OUTPUT:
+            print("Error: Lookback was None")
           pass
 
         mu = local_data.mean().values.reshape(-1, 1) # (5x1 vector, reshaped for matrix mult)
@@ -734,7 +861,7 @@ class PortfolioLab:
 
         constraints = [
             cp.sum(w) == 1,          # fully invested
-            w >= W_MIN,              # long-only, minimum {W_min*100}% participation
+            w >= self.state['w_min'],              # long-only, minimum {W_min*100}% participation
             (-mu) @ w <= -R_target   # target return or larger
         ]
 
@@ -763,6 +890,12 @@ class PortfolioLab:
         # I could probably use the dict itself, it's in the right order,
         #   but this is a better design pattern (1 source of truth)
         self.state['rec_portfolio'] = dict(zip(self.state['asset_names'], w))
+
+        # We also want to coerce it to 0 to prevent odd stuff from happening
+        for asset in self.state['rec_portfolio']:
+            if self.state['rec_portfolio'][asset] < 0.00:
+                self.state['rec_portfolio'][asset] = 0.00
+
         stats = self._compute_portfolio_stats(annualize=True)
 
         # Call update functions, new rec values
@@ -810,36 +943,6 @@ class PortfolioLab:
 
 
     # |------------------------------- EXTERNALIZED ----------------------------------|
-    def clamp_returns(self):
-        """
-        Externalized because we want to call it from main, after the widget exists
-            But before it's visible
-        """
-        mu = self.state['mu']
-
-        mu_min = float(mu.min())
-        mu_max = float(mu.max())
-
-        # Clamping the range of requestable returns to the (approximate) minimum and maximum return
-        #   from the data. +/- a slight offset to ensure the request is solvable.
-        eps = 1e-12
-
-        # Harder to hit max than min, we clamp max by 50% more than min
-        R_max = (mu_max - eps * (3/2)) * 252 * 100
-        R_min = (mu_min + eps) * 252 * 100
-
-        # Only runs on initialization of the app, used if user tries to optimize a portfolio
-        #   without having supplied a desired return first
-        self.state['req_return_daily'] = R_min / (252 * 100)
-
-        # * 252 to annualize, expected linear return (compounding ignored)
-        # * 100 so we see percent growth.
-        dpg.configure_item(
-            "desired_ret",
-            min_value=R_min,
-            max_value=R_max,
-            default_value=R_min
-            )
     # |------------------------------- EXTERNALIZED ----------------------------------|
     # |----------------------------- Helper Functions --------------------------------|
 # |---------------------------------- App Class ----------------------------------|
@@ -876,7 +979,6 @@ def main():
         demo.show_demo()
 
     # This is our last chance to do anything, actions after this point won't populate the UI before it shows
-    pl.clamp_returns()
 
     # This replaces dpg.start_dearpygui()
     while dpg.is_dearpygui_running():
