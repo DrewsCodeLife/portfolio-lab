@@ -1,2 +1,3 @@
 data/raw/*
+src/avkey.py
 .vscode
