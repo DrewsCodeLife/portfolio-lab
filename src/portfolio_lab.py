@@ -19,6 +19,7 @@ import numpy as np
 import cvxpy as cp
 
 from sklearn.covariance import LedoitWolf
+from contextlib import contextmanager
 from scipy.linalg import solve
 from pathlib import Path
 from math import floor
@@ -26,6 +27,14 @@ from math import floor
 
 
 np.random.seed(42)
+
+@contextmanager
+def use_parent(tag):
+    dpg.push_container_stack(tag)
+    try:
+        yield
+    finally:
+        dpg.pop_container_stack()
 
 # |--------------------------------- Dev Toggles ----------------------------------|
 # Used for dev, should be False in releases
@@ -38,15 +47,17 @@ VERBOSE_DEBUG_OUTPUT = True
 
 # |---------------------------------- Constants ----------------------------------|
 # Card padding constants
-CARD_OUT_X_PAD = 0.03   # padding L / R
+CARD_OUT_X_PAD = 0.05   # padding L / R
 CARD_OUT_Y_PAD = 0.06   # Padding top / bottom
 CARD_GAP_X     = 0.03   # Between card padding L / R
 CARD_GAP_Y     = 0.06   # Between card padding top / bottom
 
 CARD_ROUNDING     = 0.06  # rounding relative to card size
 CARD_INTERNAL_PAD = 5     # Padding between card content and edge
+CARD_SIZE         = 0.25  # Relative to window size
 
-SIM_WINDOW_SIZE = float(1 / 3)
+SIM_WINDOW_SIZE = 0.5
+WINDOW_GAP      = 5
 
 # Text size macros
 SMALL_TEXT_SIZE  = 24.0
@@ -64,7 +75,7 @@ TRADING_DAYS = 252
 
 # |---------------------------------- App Class ----------------------------------|
 class PortfolioLab:
-    def __init__(self, width, height):
+    def __init__(self):
         # |------------------------------ Internal Model ---------------------------------|
         self.state = {
             "rec_portfolio": {  # default portfolio assumes flat distribution
@@ -96,15 +107,23 @@ class PortfolioLab:
                 "Real Assets",
                 "Cash Equivalents"
             ],
-            "portfolio_value"   : 100.0,
-            "has_run"           : False,
-            "lookback"          : 252,
-            "mu"                : None, # daily
-            "R_max"             : None, # daily
-            "sigma"             : None, # daily
-            "req_return_daily"  : None, # Converted to daily from UI annualized request
-            "eps"               : 1e-12,
-            "w_min"             : 0.01,
+            "simulated_portfolios": {
+                "user_portfolio": 100,
+                "rec_portfolio" : 100,
+                "min_portfolio" : 100,
+                "max_portfolio" : 100,
+            },
+            'portfolios_over_time'  : None,
+            "min_risk"              : [],
+            "max_risk"              : [],
+            "portfolio_value"       : 100.0,
+            "lookback"              : 252,
+            "mu"                    : None, # daily
+            "R_max"                 : None, # daily
+            "sigma"                 : None, # daily
+            "req_return_daily"      : None, # Converted to daily from UI annualized request
+            "eps"                   : 1e-12,
+            "w_min"                 : 0.01,
         }
         # |------------------------------ Internal Model ---------------------------------|
 
@@ -128,8 +147,9 @@ class PortfolioLab:
         self.T = len(self.returns)
         self.N = self.returns.shape[1]
 
-        self.screen_width = width
-        self.screen_height = height
+        # Initialize to 0, should be updated by _compute_portfolio_layout()
+        self.screen_width  = 0
+        self.screen_height = 0
         # |---------------------------------- Data Model ----------------------------------|
 
 
@@ -155,10 +175,6 @@ class PortfolioLab:
                 # Remove border
                 dpg.add_theme_style(dpg.mvStyleVar_ChildBorderSize, 0, category=dpg.mvThemeCat_Core)
 
-        self._compute_layout()
-
-        self._init_windows()
-
         # We've loaded the data and lookback defaults to 252, so this should be safe.
         #   We're going to want the initial values stored so we can clamp annualized returns
         self._estimate_mu_sigma()
@@ -169,244 +185,20 @@ class PortfolioLab:
 
 
     # |----------------------------- Window Initialization -----------------------------|
-    def _init_windows(self):
-        """
-        Inputs:
-            - w    : total screen width
-            - h    : total screen height
-            - fonts: List of available fonts
+    def _compute_portfolio_layout(self):
+        width, height = dpg.get_item_rect_size("portfolio_window")
 
-        The goal here was for the width of the portfolio window to be approximatiely
-            2/3 of the screen. Unfortunately the current design opens to what tkinter thinks
-            the screen size is, which for whatever reason seems to be a 9:16 AR or something
-            on my laptop monitor. I'm not sure what's happening, but w + w/14 seems to fit
-            well. Definitely want to do some more testing on my desktop to see what happens
-            on different resolutions and monitors.
+        self.gap_x       = int(width * CARD_GAP_X)  # First row 2, second row 1
+        self.gap_y       = int(height * CARD_GAP_Y)  # One between row 1 and row 2
+        self.outer_pad_x = int(width * CARD_OUT_X_PAD) # Two for row 1 and row 2
+        self.outer_pad_y = int(height * CARD_OUT_Y_PAD)  # One above, one below
 
-        @TODO: Fix the screen resolution, it should be consistent and simple, not w + (w / arbitrary value)
-        """
-        with dpg.window(
-            tag="Portfolio Window",
-            pos=(0, 0),
-            width=(self.screen_width + (self.screen_width / 14)),
-            height=self.screen_height,
-            no_move=True,
-            no_title_bar=True
-            ):
-            # Any dpg window code in this block will apply to the above window.
-            #   - We can later modify it by specifying parent="Portfolio Window"
-
-            # Outer padding
-            dpg.add_spacer(height=self.outer_pad_y)
-
-            with dpg.group(horizontal=True):
-                dpg.add_spacer(width=((self.card_w * 2) / 5))
-                us_equity_header  = dpg.add_text("U.S. Equities")
-
-                dpg.add_spacer(width=((self.card_w * 5) / 8))
-                int_equity_header = dpg.add_text("International Equities")
-
-                dpg.add_spacer(width=((self.card_w * 5) / 9))
-                fi_header         = dpg.add_text("Fixed Income")
-
-                dpg.add_spacer(width=self.outer_pad_x)
-
-            # Row 1 (3 cards), with left padding via spacer
-            with dpg.group(horizontal=True):
-                dpg.add_spacer(width=self.outer_pad_x)
-
-                pf_val = self.state['portfolio_value']
-
-                with dpg.group():
-                    in_val = self.state['user_portfolio']['U.S. Equities']
-                    rec_val = pf_val * self.state['rec_portfolio']['U.S. Equities']
-
-                    frac_in_val = self.state['user_portfolio_fractional']['U.S. Equities']
-                    frac_rec_val = self.state['rec_portfolio']['U.S. Equities']
-                    drift, high = self._overunder(frac_in_val, frac_rec_val)
-
-                    self._draw_card(
-                        tag="us_equities",
-                        label=f"IN: ${in_val} / REC: ${rec_val:.2f}",
-                        drift=drift,
-                        high=high,
-                        callback=self._us_class_update
-                        )
-                dpg.add_spacer(width=self.gap_x)
-                in_val = self.state['user_portfolio']['International Equities']
-                rec_val = pf_val * self.state['rec_portfolio']['International Equities']
-
-                frac_in_val = self.state['user_portfolio_fractional']['International Equities']
-                frac_rec_val = self.state['rec_portfolio']['International Equities']
-                drift, high = self._overunder(frac_in_val, frac_rec_val)
-
-                with dpg.group():
-                    self._draw_card(
-                        tag="int_equities",
-                        label=f"IN: ${in_val} / REC: ${rec_val:.2f}",
-                        drift=drift,
-                        high=high,
-                        callback=self._inter_class_update
-                        )
-                dpg.add_spacer(width=self.gap_x)
-                in_val = self.state['user_portfolio']['Fixed Income']
-                rec_val = pf_val * self.state['rec_portfolio']['Fixed Income']
-
-                frac_in_val = self.state['user_portfolio_fractional']['Fixed Income']
-                frac_rec_val = self.state['rec_portfolio']['Fixed Income']
-                drift, high = self._overunder(frac_in_val, frac_rec_val)
-
-                with dpg.group():
-                    self._draw_card(
-                        tag="fixed_income",
-                        label=f"IN: ${in_val} / REC: ${rec_val:.2f}",
-                        drift=drift,
-                        high=high,
-                        callback=self._fixed_class_update
-                        )
-
-                dpg.add_spacer(width=self.outer_pad_x)
-
-            dpg.add_spacer(height=self.gap_y)
-
-            with dpg.group(horizontal=True):
-                dpg.add_spacer(width=self.outer_pad_x + (self.card_w * 6) / 11)
-                reit_header = dpg.add_text("Real Assets / REITs")
-
-                dpg.add_spacer(width=self.gap_x + ((self.card_w * 14) / 19))
-                cash_header = dpg.add_text("Cash / Cash Equivalents")
-                dpg.add_spacer(width=(self.card_w/3) + self.outer_pad_x)
-
-            # Row 2 (2 cards)
-            with dpg.group(horizontal=True):
-                dpg.add_spacer(width=self.outer_pad_x + (self.card_w / 3))
-                in_val = self.state['user_portfolio']['Real Assets']
-                rec_val = pf_val * self.state['rec_portfolio']['Real Assets']
-
-                frac_in_val = self.state['user_portfolio_fractional']['Real Assets']
-                frac_rec_val = self.state['rec_portfolio']['Real Assets']
-                drift, high = self._overunder(frac_in_val, frac_rec_val)
-
-                with dpg.group():
-                    self._draw_card(
-                        tag="real_assets",
-                        label=f"IN: ${in_val} / REC: ${rec_val:.2f}",
-                        drift=drift,
-                        high=high,
-                        callback=self._reits_class_update
-                        )
-                dpg.add_spacer(width=(self.gap_x + (self.card_w / 3)))
-                in_val = self.state['user_portfolio']['Cash Equivalents']
-                rec_val = pf_val * self.state['rec_portfolio']['Cash Equivalents']
-
-                frac_in_val = self.state['user_portfolio_fractional']['Cash Equivalents']
-                frac_rec_val = self.state['rec_portfolio']['Cash Equivalents']
-                drift, high = self._overunder(frac_in_val, frac_rec_val)
-
-                with dpg.group():
-                    self._draw_card(
-                        tag="cash_equivalents",
-                        label=f"IN: ${in_val} / REC: ${rec_val:.2f}",
-                        drift=drift,
-                        high=high,
-                        callback=self._cash_class_update
-                        )
-
-            dpg.add_spacer(width=self.outer_pad_x)
-
-        # Bind all the headers in one pass to keep things consistent.
-        for item in (us_equity_header, int_equity_header, fi_header, reit_header, cash_header):
-            dpg.bind_item_font(item, font=self.fonts["large"])
-
-        with dpg.window(
-            pos=(self.screen_width + (self.screen_width/14) + (self.outer_pad_x / 2), 0),
-            width=(self.screen_width * (3 / 4)),
-            height=self.screen_height,
-            no_move=True,
-            no_title_bar=True
-            ):
-            with dpg.group():
-                with dpg.drawlist(
-                    width=(self.screen_width * (3 / 4)),
-                    height=self.screen_height * SIM_WINDOW_SIZE
-                    ):
-                    # Here we can define a sim plot window
-                    dpg.draw_rectangle(
-                        (0, 0),
-                        ((self.screen_width * (3 / 4)), self.screen_height * SIM_WINDOW_SIZE),
-                        color=(70, 70, 70, 255),
-                        fill=(35, 35, 35, 255),
-                        rounding=self.rounding,
-                        thickness=1,
-                        )
-
-                # Here we can define the manual data entry
-                dpg.add_slider_int(
-                    label="Lookback period (days)",
-                    tag="lookback",
-                    min_value=252,
-                    max_value=(self.T - 252),
-                    callback=self._lookback_update,
-                    user_data=self.T,
-                    default_value=252
-                    )
-                dpg.add_slider_int(
-                    label=f"Simulation Period [1, {floor(self.T / 252)}] (years)",
-                    tag="sim_period",
-                    min_value=1,
-                    max_value=floor(self.T / 252),
-                    user_data=self.T,
-                    default_value=1,
-                    callback=self._sim_period_update,
-                    )
-
-                dpg.add_slider_float(
-                    label="Low -> High Risk",
-                    tag="desired_ret",
-                    min_value=0.05,
-                    max_value=1.0,
-                    default_value=0.5,
-                    callback=self._update_desired_ret,
-                    )
-                dpg.add_slider_double(
-                    label="Model Minimum Investment",
-                    tag="model_min_investment",
-                    min_value=0.00,
-                    max_value=0.2,
-                    default_value=0.01,
-                    callback=self._update_min_investment
-                )
-                dpg.add_slider_double(
-                    label="Model Return Margin",
-                    tag="model_return_margin",
-                    min_value=1e-12,
-                    max_value=1e-3,
-                    default_value=1e-12,
-                    clamped=True,
-                    format="%.12f",
-                    callback=self._update_return_margin
-                )
-                dpg.add_text(default_value=self.state['portfolio_value'], tag='pv_value')
-                dpg.add_button(label="Optimize Portfolio", callback=self._construct_portfolio)
-
-
-    def _compute_layout(self):
-        self.outer_pad_x = int(self.screen_width * CARD_OUT_X_PAD)
-        self.outer_pad_y = int(self.screen_height * CARD_OUT_Y_PAD)
-        self.gap_x       = int(self.screen_width * CARD_GAP_X)
-        self.gap_y       = int(self.screen_height * CARD_GAP_Y)
-
-        # Card width from 3 columns
-        self.card_w = (self.screen_width - 2 * self.outer_pad_x - 2 * self.gap_x) / 3.0
-
+        self.card_w = int((width - (self.gap_x * 2) - (self.outer_pad_x * 2)) / 3)
         # Card height from 2 rows
-        self.card_h = (self.screen_height - 2 * self.outer_pad_y - 1 * self.gap_y) / 2.0
+        self.card_h = int((height - 2 * self.outer_pad_y - self.gap_y) / 2.0)
 
         # Enforce card slightly wider than tall
         self.card_h = min(self.card_h, self.card_w * 0.85)
-
-        self.card_w = int(self.card_w)
-        self.card_h = int(self.card_h)
 
         self.rounding = int(min(self.card_w, self.card_h) * CARD_ROUNDING)
 
@@ -485,6 +277,215 @@ class PortfolioLab:
 
             dpg.bind_item_theme(tag + '_window_1', self.transparent_child_theme)
             dpg.bind_item_theme(tag + '_window_2', self.transparent_child_theme)
+
+    def _build_portfolio_window(self):
+        with use_parent('portfolio_window'):
+            # Make sure we compute the inner size and card widths, etc. before using them
+            self._compute_portfolio_layout()
+
+            width, height = dpg.get_item_rect_size("portfolio_window")
+
+            dpg.add_spacer(height=self.outer_pad_y)
+
+            # Row 1 (3 cards), with left padding via spacer
+            with dpg.group(horizontal=True):
+                # Subtracting a magic number to make it centered
+                #   - This is horrible design
+                #   - Oh well. I've spent too many hours trying to align things.
+                #   - Measured by a ruler, this is damn close, off by about 1/10 of an inch
+                dpg.add_spacer(width=self.outer_pad_x - 5)
+
+                pf_val = self.state['portfolio_value']
+
+                in_val = self.state['user_portfolio']['U.S. Equities']
+                rec_val = pf_val * self.state['rec_portfolio']['U.S. Equities']
+
+                frac_in_val = self.state['user_portfolio_fractional']['U.S. Equities']
+                frac_rec_val = self.state['rec_portfolio']['U.S. Equities']
+                drift, high = self._overunder(frac_in_val, frac_rec_val)
+
+                with dpg.group():
+                    with dpg.group(horizontal=True):
+                        dpg.add_spacer(width=100)
+                        us_equity_header = dpg.add_text("U.S. Equities")
+
+                    self._draw_card(
+                        tag="us_equities",
+                        label=f"IN: ${in_val} / REC: ${rec_val:.2f}",
+                        drift=drift,
+                        high=high,
+                        callback=self._us_class_update
+                        )
+                dpg.add_spacer(width=self.gap_x)
+
+                in_val = self.state['user_portfolio']['International Equities']
+                rec_val = pf_val * self.state['rec_portfolio']['International Equities']
+
+                frac_in_val = self.state['user_portfolio_fractional']['International Equities']
+                frac_rec_val = self.state['rec_portfolio']['International Equities']
+                drift, high = self._overunder(frac_in_val, frac_rec_val)
+
+                with dpg.group():
+                    with dpg.group(horizontal=True):
+                        dpg.add_spacer(width=60)
+                        int_equity_header = dpg.add_text("International Equities")
+
+                    self._draw_card(
+                        tag="int_equities",
+                        label=f"IN: ${in_val} / REC: ${rec_val:.2f}",
+                        drift=drift,
+                        high=high,
+                        callback=self._inter_class_update
+                        )
+
+                dpg.add_spacer(width=self.gap_x)
+                in_val = self.state['user_portfolio']['Fixed Income']
+                rec_val = pf_val * self.state['rec_portfolio']['Fixed Income']
+
+                frac_in_val = self.state['user_portfolio_fractional']['Fixed Income']
+                frac_rec_val = self.state['rec_portfolio']['Fixed Income']
+                drift, high = self._overunder(frac_in_val, frac_rec_val)
+
+                with dpg.group():
+                    with dpg.group(horizontal=True):
+                        dpg.add_spacer(width=95)
+                        fi_header = dpg.add_text("Fixed Income")
+
+                    self._draw_card(
+                        tag="fixed_income",
+                        label=f"IN: ${in_val} / REC: ${rec_val:.2f}",
+                        drift=drift,
+                        high=high,
+                        callback=self._fixed_class_update
+                        )
+
+                dpg.add_spacer(width=self.outer_pad_x)
+
+            dpg.add_spacer(height=self.gap_y)
+
+            # Row 2 (2 cards)
+            with dpg.group(horizontal=True):
+                # Similar to the first group, we use a magic number to center things.
+                # @TODO: Fix this.
+                left_offset = int((width - 2 * self.card_w - self.gap_x - 10) / 2)
+                dpg.add_spacer(width=left_offset)
+
+                in_val = self.state['user_portfolio']['Real Assets']
+                rec_val = pf_val * self.state['rec_portfolio']['Real Assets']
+
+                frac_in_val = self.state['user_portfolio_fractional']['Real Assets']
+                frac_rec_val = self.state['rec_portfolio']['Real Assets']
+                drift, high = self._overunder(frac_in_val, frac_rec_val)
+
+                with dpg.group():
+                    with dpg.group(horizontal=True):
+                        dpg.add_spacer(width=75)
+                        reit_header = dpg.add_text("Real Assets / REITs")
+
+                    self._draw_card(
+                        tag="real_assets",
+                        label=f"IN: ${in_val} / REC: ${rec_val:.2f}",
+                        drift=drift,
+                        high=high,
+                        callback=self._reits_class_update
+                        )
+
+                dpg.add_spacer(width=self.gap_x)
+                in_val = self.state['user_portfolio']['Cash Equivalents']
+                rec_val = pf_val * self.state['rec_portfolio']['Cash Equivalents']
+
+                frac_in_val = self.state['user_portfolio_fractional']['Cash Equivalents']
+                frac_rec_val = self.state['rec_portfolio']['Cash Equivalents']
+                drift, high = self._overunder(frac_in_val, frac_rec_val)
+
+                with dpg.group():
+                    with dpg.group(horizontal=True):
+                        dpg.add_spacer(width=50)
+                        cash_header = dpg.add_text("Cash / Cash Equivalents")
+
+                    self._draw_card(
+                        tag="cash_equivalents",
+                        label=f"IN: ${in_val} / REC: ${rec_val:.2f}",
+                        drift=drift,
+                        high=high,
+                        callback=self._cash_class_update
+                        )
+
+        # Bind all the headers in one pass to keep things consistent.
+        for item in (us_equity_header, int_equity_header, fi_header, reit_header, cash_header):
+            dpg.bind_item_font(item, font=self.fonts["large"])
+
+
+    def _build_sim_window(self):
+        with use_parent('simulation_window'):
+            with dpg.group():
+                with dpg.child_window(
+                    width=-1,
+                    height=self.screen_height * SIM_WINDOW_SIZE,
+                    border=True,
+                    tag='sim_plot_window'
+                    ):
+                    with dpg.plot(
+                        label="Simulation Plot",
+                        width=-1,
+                        height=-1,
+                        tag="sim_plot"
+                        ): # width=-1 auto-expands
+                        dpg.add_plot_legend()
+                        dpg.add_plot_axis(dpg.mvXAxis, label="Trading Days", tag="sim_plot_x_axis", auto_fit=True)
+                        dpg.add_plot_axis(dpg.mvYAxis, label="Value ($)", tag="sim_plot_y_axis", auto_fit=True)
+
+                dpg.add_spacer(height=20)
+
+                # Here we can define the manual data entry
+                dpg.add_slider_int(
+                    label="Lookback period (days)",
+                    tag="lookback",
+                    min_value=252,
+                    max_value=(self.T - 252),
+                    callback=self._lookback_update,
+                    user_data=self.T,
+                    default_value=252
+                    )
+                dpg.add_slider_int(
+                    label=f"Simulation Period [1, {floor(self.T / 252)}] (years)",
+                    tag="sim_period",
+                    min_value=1,
+                    max_value=floor(self.T / 252),
+                    user_data=self.T,
+                    default_value=1,
+                    callback=self._sim_period_update,
+                    )
+
+                dpg.add_slider_float(
+                    label="Low -> High Risk",
+                    tag="desired_ret",
+                    min_value=0.05,
+                    max_value=1.0,
+                    default_value=0.5,
+                    callback=self._update_desired_ret,
+                    )
+                dpg.add_slider_double(
+                    label="Model Minimum Investment",
+                    tag="model_min_investment",
+                    min_value=0.00,
+                    max_value=0.2,
+                    default_value=0.01,
+                    callback=self._update_min_investment
+                )
+                dpg.add_slider_double(
+                    label="Model Return Margin",
+                    tag="model_return_margin",
+                    min_value=1e-12,
+                    max_value=1e-3,
+                    default_value=1e-12,
+                    clamped=True,
+                    format="%.12f",
+                    callback=self._update_return_margin
+                )
+                dpg.add_text(default_value=self.state['portfolio_value'], tag='pv_value')
+                dpg.add_button(label="Optimize Portfolio", callback=self._construct_portfolio)
+
     # |----------------------------- Window Initialization -----------------------------|
 
 
@@ -574,6 +575,9 @@ class PortfolioLab:
         else:
             print("Target return unsolvable. Or potentially invalid R_target. Future pull up popup. For now crash")
             exit(-1)
+
+        self._simulate_portfolio()
+        self._update_sim_plot()
 
     def _update_return_margin(self, sender, app_data):
         self.state["eps"] = app_data
@@ -841,6 +845,7 @@ class PortfolioLab:
             print(f"Condition number: {cond_number}")
             print(f"Min Eigenvalue: {min(eigs)}\nMax Eigenvalue: {max(eigs)}")
 
+        # End User Requested Portfolio
         N = Sigma.shape[0]
 
         w = cp.Variable(N)
@@ -875,7 +880,7 @@ class PortfolioLab:
         problem = cp.Problem(objective, constraints)
         problem.solve(solver="SCS", verbose=False)
 
-        # Fail early if optiimization was unsuccessful
+        # Fail early if optimization was unsuccessful
         if w.value is None:
             if DEBUG_OUTPUT:
                 print(f"Optimization was {problem.status}")
@@ -903,12 +908,30 @@ class PortfolioLab:
 
         self.state['markowitz_status'] = status
 
-        return {
+        ret_val = {
             "target_R": float(R_target),
             "status": status,
             "weights": w,
             **stats
         }
+        # End User Requested Portfolio
+
+        # Min Risk Portfolio
+        w = cp.Variable(N)
+
+        constraints = []
+        constraints.append(cp.sum(w) == 1)  # fully invested
+        constraints.append(w >= 0)          # long-only (no shorting)
+
+        objective = cp.Minimize(cp.quad_form(w, Sigma))
+
+        problem = cp.Problem(objective, constraints)
+        problem.solve(solver="SCS", verbose=False)
+
+        self.state['min_risk'] = np.asarray(w.value).ravel()
+        # End Min Risk Portfolio
+
+        return ret_val
 
 
     def _compute_portfolio_stats(self, annualize=True):
@@ -939,10 +962,110 @@ class PortfolioLab:
             out["vol_ann"] = vol_daily * np.sqrt(TRADING_DAYS)
 
         return out
+
+    def _simulate_portfolio(self):
+        classes = ["US_Equity", "International", "Bonds", "REITs", "Cash"]
+        pf_val = self.state['portfolio_value']
+
+        # We don't want to simulate over the same period we trained the model
+        # - Model uses the last 'lookback' rows, so we drop them
+        sim_rets = self.returns.iloc[:-self.state['lookback']]
+
+        user_portfolio = np.array(list(self.state['user_portfolio'].values()))
+
+        rec_risk = np.array(list(self.state['rec_portfolio'].values()))
+        rec_portfolio = rec_risk * pf_val
+
+        min_risk = self.state['min_risk']
+        min_portfolio = min_risk * pf_val
+
+        Sigma = self.state['sigma']
+        max_asset = np.argmax(np.diag(Sigma))
+        max_risk = np.zeros(5)
+        max_risk[max_asset] = 1
+        max_portfolio = max_risk * pf_val
+
+        print(max_portfolio)
+
+        portfolios = np.vstack([user_portfolio, rec_portfolio, min_portfolio, max_portfolio])
+
+        pfs_over_time = []
+
+        for _, row in sim_rets.iterrows():
+            # Assumes that data is aligned, matching mu in markowitz.py
+            portfolios = portfolios * (1.0 + row[classes].values)
+            pfs_over_time.append(portfolios.sum(axis=1).copy())
+
+        final_values = portfolios.sum(axis=1)
+
+        self.state['simulated_portfolios'] = {
+            "user_portfolio": final_values[0],
+            "rec_portfolio" : final_values[1],
+            "min_portfolio" : final_values[2],
+            "max_portfolio" : final_values[3]
+        }
+
+        self.state['portfolios_over_time'] = pfs_over_time
+
+        pfs_save = pd.DataFrame(pfs_over_time)
+        pfs_save.to_csv("simulated_portfolios.csv")
+
+
+    def _update_sim_plot(self):
+        """
+            "user_portfolio"
+            "rec_portfolio"
+            "min_portfolio"
+            "max_portfolio"
+        """
+        pfs_over_time = self.state['portfolios_over_time']
+        x = list(range(len(pfs_over_time)))
+
+        cols = list(zip(*pfs_over_time))
+
+        dpg.add_line_series(x=x, y=cols[0], parent="sim_plot_y_axis", label="User Portfolio")
+        dpg.add_line_series(x=x, y=cols[1], parent="sim_plot_y_axis", label="Recommended Portfolio")
+        dpg.add_line_series(x=x, y=cols[2], parent="sim_plot_y_axis", label="Min Portfolio")
+        dpg.add_line_series(x=x, y=cols[3], parent="sim_plot_y_axis", label="Max Portfolio")
     # |------------------------------- INTERNALIZED ----------------------------------|
 
 
     # |------------------------------- EXTERNALIZED ----------------------------------|
+    def init_window_shells(self):
+        # Externalized because we want to call it after calling maximize()
+        #   if we call this too early, these two get_viewport calls
+        #       reflect an early, incorrect value
+        self.screen_width = dpg.get_viewport_client_width()
+        self.screen_height = dpg.get_viewport_client_height()
+
+        portfolio_window = dpg.add_window(
+                                        tag="portfolio_window",
+                                        pos=(0, 0),
+                                        width=self.screen_width * (2 / 3),
+                                        height=self.screen_height,
+                                        no_move=True,
+                                        no_title_bar=True
+                                        )
+
+        simulation_window = dpg.add_window(
+                                        tag='simulation_window',
+                                        pos=(self.screen_width * (2 / 3) + WINDOW_GAP, 0),
+                                        width=(self.screen_width * (1 / 3) - WINDOW_GAP),
+                                        height=self.screen_height,
+                                        no_move=True,
+                                        no_title_bar=True,
+                                        )
+
+        with dpg.theme() as portfolio_window_theme:
+            with dpg.theme_component(dpg.mvAll):
+                dpg.add_theme_style(dpg.mvStyleVar_ItemSpacing, 0, 0, category=dpg.mvThemeCat_Core)
+
+        dpg.bind_item_theme(portfolio_window, portfolio_window_theme)
+
+
+    def build_windows(self):
+        self._build_portfolio_window()
+        self._build_sim_window()
     # |------------------------------- EXTERNALIZED ----------------------------------|
     # |----------------------------- Helper Functions --------------------------------|
 # |---------------------------------- App Class ----------------------------------|
@@ -954,8 +1077,8 @@ def main():
     # We load tkinter literally just to fetch the screen specs
     root = tk.Tk()
     root.withdraw()
-    width = root.winfo_screenheight()
-    height = root.winfo_screenwidth()
+    height = root.winfo_screenheight()
+    width = root.winfo_screenwidth()
     root.destroy()
 
     dpg.create_context()
@@ -967,12 +1090,23 @@ def main():
         )
     # |---------------------------- Screen Initialization -----------------------------|
 
-    pl = PortfolioLab(width, height)
+    pl = PortfolioLab()
 
     # Anything defined after these calls simply won't appear
     dpg.setup_dearpygui()
     dpg.show_viewport()
     dpg.maximize_viewport()
+
+    # Let one frame render, so the width/height match maximized size.
+    dpg.render_dearpygui_frame()
+
+    # Setup windows after the viewport is setup
+    pl.init_window_shells()
+
+    # Let another frame render so the windows are initialized properly
+    dpg.render_dearpygui_frame()
+
+    pl.build_windows()
 
     if SHOW_DEMO:
         # Demo only shows up *inside* of the viewport we defined for the main window
