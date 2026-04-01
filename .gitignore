@@ -1,3 +1,4 @@
 data/raw/*
 src/avkey.py
 .vscode
+*.pkl

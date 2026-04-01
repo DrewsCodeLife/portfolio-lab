@@ -7,28 +7,6 @@ from pandas.api.types import is_numeric_dtype
 from sklearn.covariance import LedoitWolf
 from scipy.linalg import solve
 
-np.random.seed(42)
-
-data    = pd.read_csv("data/cleaned/cleaned.csv")
-returns = pd.read_csv("data/cleaned/daily_returns.csv")
-
-dates = data["Date"]
-
-data = data.loc[:, data.columns != "Date"]
-returns = returns.loc[:, returns.columns != "Date"]
-
-# First day has no 'daily return', so we drop it
-data = data.iloc[1:].reset_index(drop=True)
-returns = returns.iloc[1:].reset_index(drop=True)
-
-T = len(returns)
-N = returns.shape[1]
-
-for c in returns.columns:
-  if not is_numeric_dtype(returns[c]):
-    print("ERROR: NON-NUMERIC COLUMN: ", c, "\nData type: ", returns[c].dtype)
-    exit(-1)
-
 def estimate_mu_sigma(rets, lookback=None, shrink=True):
   """
   Estimate mean values and covariance matrix of daily returns
@@ -272,62 +250,87 @@ def build_long_only_frontier(mu, Sigma, n_points=50, w_max=None, solver=None):
 
     return frontier
 
+def main():
+    np.random.seed(42)
 
-# mu is ndarray (US_Equity, International, Bonds, REITs, Cash)
-# lookback is user defined (longer results in more historically averaged portfolio)
-# - Will need to constrain in UI relative to dataset
-# - Long term is more data which is often considered better, but it also means an average
-#     derived from older data, meaning it may not reflect future conditions as well
-# - Short term simply might result in a bad model
-lookback = 252
-mu, Sigma = estimate_mu_sigma(returns, lookback=lookback, shrink=True)
+    data    = pd.read_csv("data/cleaned/cleaned.csv")
+    returns = pd.read_csv("data/cleaned/daily_returns.csv")
 
-consts = compute_markowitz_constants(mu, Sigma)
+    dates = data["Date"]
 
-# If the condition number is too large, we've got a problem
-cond_number = np.linalg.cond(Sigma)
-print(f"Assets: {returns.shape[1]}, Lookback days: {lookback}, Condition number of Sigma: {cond_number:.3e}")
-print("A, B, C, Delta:", consts['A'], consts['B'], consts['C'], consts['Delta'])
+    data = data.loc[:, data.columns != "Date"]
+    returns = returns.loc[:, returns.columns != "Date"]
 
-if cond_number >= math.pow(10, 5):
-  print(f"WARNING: Condition number is greater than 100,000: {cond_number}")
+    # First day has no 'daily return', so we drop it
+    data = data.iloc[1:].reset_index(drop=True)
+    returns = returns.iloc[1:].reset_index(drop=True)
 
-mu_vec = mu.ravel()  # Reshape mu
+    T = len(returns)
+    N = returns.shape[1]
 
-# Find minimum variance portfolio
-# - Probably useful in the UI as a contrast
-w_mv, st = solve_min_variance_long_only(Sigma, w_max=None)  # optionally w_max=0.6
-print("MV status:", st, "sum:", None if w_mv is None else w_mv.sum())
-if w_mv is not None:
-    print("MV stats:", compute_portfolio_stats(mu_vec, Sigma, w_mv))
+    for c in returns.columns:
+        if not is_numeric_dtype(returns[c]):
+            print("ERROR: NON-NUMERIC COLUMN: ", c, "\nData type: ", returns[c].dtype)
+            exit(-1)
 
-# Now construct the actual efficient frontier, using 50 points to approximate the curve
-frontier = build_long_only_frontier(mu_vec, Sigma, n_points=50, w_max=None)
-print("Frontier points (feasible):", len(frontier))
+    # mu is ndarray (US_Equity, International, Bonds, REITs, Cash)
+    # lookback is user defined (longer results in more historically averaged portfolio)
+    # - Will need to constrain in UI relative to dataset
+    # - Long term is more data which is often considered better, but it also means an average
+    #     derived from older data, meaning it may not reflect future conditions as well
+    # - Short term simply might result in a bad model
+    lookback = 252
+    mu, Sigma = estimate_mu_sigma(returns, lookback=lookback, shrink=True)
 
-if len(frontier) >= 1:
-  print("First frontier point:", frontier[0]["exp_return_ann"], frontier[0]["vol_ann"], frontier[0]["weights"])
-else:
-   print(
-        "Well darn, cvxpy determined the problem was literally unsolvable.\n" \
-        + "For literally every target return. Nice one bud."
-      )
+    consts = compute_markowitz_constants(mu, Sigma)
 
-frontier_df = pd.DataFrame(frontier)
+    # If the condition number is too large, we've got a problem
+    cond_number = np.linalg.cond(Sigma)
+    print(f"Assets: {returns.shape[1]}, Lookback days: {lookback}, Condition number of Sigma: {cond_number:.3e}")
+    print("A, B, C, Delta:", consts['A'], consts['B'], consts['C'], consts['Delta'])
 
-TRADING_DAYS = 252  # How many trading days per year?
-frontier_df["exp_return_ann"] = frontier_df["exp_return_daily"] * TRADING_DAYS
-frontier_df["vol_ann"] = frontier_df["vol_daily"] * math.sqrt(TRADING_DAYS)
+    if cond_number >= math.pow(10, 5):
+        print(f"WARNING: Condition number is greater than 100,000: {cond_number}")
 
-# Show the first few frontier points and the min variance portfolio
-pd.set_option('display.precision', 6)
-print("\nMinimum-variance weights (sum to):", w_mv.sum())
-print(pd.Series(w_mv, index=returns.columns))
+    mu_vec = mu.ravel()  # Reshape mu
 
-print(frontier_df.head())
+    # Find minimum variance portfolio
+    # - Probably useful in the UI as a contrast
+    w_mv, st = solve_min_variance_long_only(Sigma, w_max=None)  # optionally w_max=0.6
+    print("MV status:", st, "sum:", None if w_mv is None else w_mv.sum())
+    if w_mv is not None:
+        print("MV stats:", compute_portfolio_stats(mu_vec, Sigma, w_mv))
 
-frontier_df_head = frontier_df[["target_R", "exp_return_ann", "vol_ann"]].head(12).copy()
-frontier_df_head.columns = ["target_R_daily", "exp_return_ann", "vol_ann"]
-print(frontier_df_head)
+    # Now construct the actual efficient frontier, using 50 points to approximate the curve
+    frontier = build_long_only_frontier(mu_vec, Sigma, n_points=50, w_max=None)
+    print("Frontier points (feasible):", len(frontier))
 
-frontier_df.to_csv("derived_frontiers.csv")
+    if len(frontier) >= 1:
+        print("First frontier point:", frontier[0]["exp_return_ann"], frontier[0]["vol_ann"], frontier[0]["weights"])
+    else:
+        print(
+                "Well darn, cvxpy determined the problem was literally unsolvable.\n" \
+                + "For literally every target return. Nice one bud."
+            )
+
+    frontier_df = pd.DataFrame(frontier)
+
+    TRADING_DAYS = 252  # How many trading days per year?
+    frontier_df["exp_return_ann"] = frontier_df["exp_return_daily"] * TRADING_DAYS
+    frontier_df["vol_ann"] = frontier_df["vol_daily"] * math.sqrt(TRADING_DAYS)
+
+    # Show the first few frontier points and the min variance portfolio
+    pd.set_option('display.precision', 6)
+    print("\nMinimum-variance weights (sum to):", w_mv.sum())
+    print(pd.Series(w_mv, index=returns.columns))
+
+    print(frontier_df.head())
+
+    frontier_df_head = frontier_df[["target_R", "exp_return_ann", "vol_ann"]].head(12).copy()
+    frontier_df_head.columns = ["target_R_daily", "exp_return_ann", "vol_ann"]
+    print(frontier_df_head)
+
+    frontier_df.to_csv("derived_frontiers.csv")
+
+if __name__ == "__main__":
+    main()

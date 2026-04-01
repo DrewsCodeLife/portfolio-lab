@@ -1018,6 +1018,8 @@ class PortfolioLab:
             "min_portfolio"
             "max_portfolio"
         """
+        dpg.delete_item('sim_plot_y_axis', children_only=True, slot=1)
+
         pfs_over_time = self.state['portfolios_over_time']
         x = list(range(len(pfs_over_time)))
 
