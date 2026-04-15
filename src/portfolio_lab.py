@@ -49,21 +49,21 @@ VERBOSE_DEBUG_OUTPUT = True
 
 # |---------------------------------- Constants ----------------------------------|
 # Card padding constants
-CARD_OUT_X_PAD = 0.035   # padding L / R
+CARD_OUT_X_PAD = 0.02   # padding L / R
 CARD_OUT_Y_PAD = 0.15   # Padding top / bottom
-CARD_GAP_X     = 0.02   # Between card padding L / R
+CARD_GAP_X     = 0.015  # Between card padding L / R
 CARD_GAP_Y     = 0.08   # Between card padding top / bottom
 
 CARD_ROUNDING     = 0.06  # rounding relative to card size
 CARD_INTERNAL_PAD = 5     # Padding between card content and edge
 CARD_SIZE         = 0.25  # Relative to window size
 
-SIM_WINDOW_SIZE = 0.5
+SIM_WINDOW_SIZE = 0.75
 WINDOW_GAP      = 5
 
 # Text size macros
-SMALL_TEXT_SIZE  = 24.0
-MEDIUM_TEXT_SIZE = 30.0
+SMALL_TEXT_SIZE  = 12.0
+MEDIUM_TEXT_SIZE = 20.0
 LARGE_TEXT_SIZE  = SMALL_TEXT_SIZE * 2
 HEADER_TEXT_SIZE = SMALL_TEXT_SIZE * 3
 
@@ -72,15 +72,21 @@ MEDIUM_TEXT_PAD = MEDIUM_TEXT_SIZE * 2
 LARGE_TEXT_PAD  = LARGE_TEXT_SIZE * 2
 
 TRADING_DAYS = 252
+
+USER = (66, 135, 245)      # bright blue
+REC  = (46, 204, 113)      # bright green
+MIN  = (120, 140, 170)     # muted slate
+MAX  = (230, 160, 60)      # muted orange
 # |---------------------------------- Constants ----------------------------------|
 
 
 # |---------------------------------- App Class ----------------------------------|
 class PortfolioLab:
+    # |------------------------------ Internal Model ---------------------------------|
     def __init__(self):
-        # |---------------------------------- Data Model ----------------------------------|
+        # |------------------------------ Internal Model ---------------------------------|
         self.CWD = Path(__file__).parent.parent
-        self.FONT_FOLDER = self.CWD / "font" / "League_Gothic" / "static"
+        self.FONT_FOLDER = self.CWD / "font"
 
         self.data    = pd.read_csv(self.CWD / "data" / "cleaned" / "cleaned.csv")
         self.returns = pd.read_csv(self.CWD / "data" / "cleaned" / "asset_daily_returns.csv")
@@ -98,7 +104,7 @@ class PortfolioLab:
         self.N = self.returns.shape[1]
 
         self.asset_names = self.returns.columns
-        portfolio_dicts = self._build_portfolio_dicts(self.asset_names)
+        portfolio_dicts = self._build_portfolio_dicts()
 
         # Initialize to 0, should be updated by _compute_portfolio_layout()
         self.screen_width  = 0
@@ -107,10 +113,9 @@ class PortfolioLab:
         self.asset_map = {}
         for i, asset_name in enumerate(self.asset_names):
             self.asset_map[f"asset_{i}"] = asset_name
-        # |---------------------------------- Data Model ----------------------------------|
 
+        self.starting_value = 100.0
 
-        # |------------------------------ Internal Model ---------------------------------|
         self.state = {
             **portfolio_dicts,
             "simulated_portfolios": {
@@ -122,7 +127,7 @@ class PortfolioLab:
             'portfolios_over_time'  : None,
             "min_risk"              : [],
             "max_risk"              : [],
-            "portfolio_value"       : 100.0,
+            "portfolio_value"       : self.starting_value,
             "lookback"              : 252,
             "mu"                    : None, # daily
             "R_max"                 : None, # daily
@@ -137,16 +142,18 @@ class PortfolioLab:
         # |----------------------------- Window Initialization -----------------------------|
         # Drawing the window means we need fonts
         with dpg.font_registry():
-            default_font = dpg.add_font(self.FONT_FOLDER / "LeagueGothic-Regular.ttf", SMALL_TEXT_SIZE)
-            semicondensed_font = dpg.add_font(self.FONT_FOLDER / "LeagueGothic_SemiCondensed-Regular.ttf", MEDIUM_TEXT_SIZE)
-            condensed_font = dpg.add_font(self.FONT_FOLDER / "LeagueGothic_Condensed-Regular.ttf", LARGE_TEXT_SIZE)
+            title_font = dpg.add_font(self.FONT_FOLDER / "League_Gothic" / "static" / "LeagueGothic-Regular.ttf", LARGE_TEXT_SIZE)
+            body_font = dpg.add_font(self.FONT_FOLDER / "Open_Sans" / "static" / "OpenSans_SemiCondensed-Regular.ttf", MEDIUM_TEXT_SIZE)
+            sim_body_font = dpg.add_font(self.FONT_FOLDER / "Open_Sans" / "static" / "OpenSans_Condensed-Regular.ttf", MEDIUM_TEXT_SIZE)
+            numbers_font = dpg.add_font(self.FONT_FOLDER / "Space_Mono" / "SpaceMono-Regular.ttf", MEDIUM_TEXT_SIZE)
 
-        dpg.bind_font(default_font)
+        dpg.bind_font(body_font)
 
         self.fonts = {
-            "small": default_font,
-            "medium": semicondensed_font,
-            "large": condensed_font
+            "title"     : title_font,
+            "body"      : body_font,
+            "sim_body"  : sim_body_font,
+            "numbers"   : numbers_font,
             }
 
         with dpg.theme() as self.transparent_child_theme:
@@ -162,22 +169,77 @@ class PortfolioLab:
 
         # Initialize the desired return to 50% of theoretical max
         self._update_desired_ret(sender=None, app_data=0.5)
+
+        self._try_load_state()
         # |----------------------------- Window Initialization -----------------------------|
 
 
-    def _build_portfolio_dicts(self, asset_names, starting_value=100.0):
-        n_assets = len(asset_names)
-        equal_weight = 1.0 / n_assets
-        equal_percent = 100.0 / n_assets
+    # |---------------------------------- Initialization ----------------------------------|
+    def _build_portfolio_dicts(self, starting_value=100.0):
+        equal_weight = 1.0 / self.N
+        equal_percent = 100.0 / self.N
 
         return {
-            "rec_portfolio": {name: equal_weight for name in asset_names},
-            "user_portfolio": {name: equal_weight * starting_value for name in asset_names},
-            "user_portfolio_fractional": {name: equal_weight for name in asset_names},
+            "rec_portfolio": {name: equal_weight for name in self.asset_names},
+            "user_portfolio": {name: equal_weight * starting_value for name in self.asset_names},
+            "user_portfolio_fractional": {name: equal_weight for name in self.asset_names},
         }
+
+    def _try_load_state(self):
+        """
+        Attempt to load the autosaved app_state.json, which may have been automatically
+            saved from a prior optimization
+        """
+        try:
+            with open(self.CWD / "app_state.json", "r") as f:
+                loaded_data = json.load(f)
+
+                # |------------------------------- Load Lookback -------------------------------|
+                self.state['lookback'] = lookback = loaded_data['lookback']
+                # sim_max = floor((self.T - lookback) / 252)
+                # dpg.set_value("sim_period", sim_max)
+                # dpg.configure_item("sim_period", max_value=sim_max, label=f"Simulation Period [1, {sim_max}] (years)")
+                self._estimate_mu_sigma()
+                # |------------------------------- Load Lookback -------------------------------|
+
+
+                # |-------------------------- Redo Prior Optimization --------------------------|
+                self.state['user_portfolio_fractional'] = loaded_data['user_portfolio_fractional']
+                self.state['user_portfolio'] = loaded_data['user_portfolio']
+                self.state['portfolio_value'] = loaded_data['portfolio_value']
+
+                self.state['req_return_daily'] = loaded_data['req_return_daily']
+                self.state['min_risk'] = list(loaded_data['min_risk'])
+                # |-------------------------- Redo Prior Optimization --------------------------|
+
+                self.loaded_successfully = True
+        except Exception as e:
+            self.loaded_successfully = False
+            if VERBOSE_DEBUG_OUTPUT:
+                print(f"Failed to load CWD/app_state.json: {e}")
+    # |---------------------------------- Initialization ----------------------------------|
 
 
     # |----------------------------- Window Initialization -----------------------------|
+    def _build_error_modal(self):
+        with dpg.window(
+            label="Load Error",
+            tag="error_modal",
+            modal=True,
+            show=False,
+            no_resize=True,
+            no_collapse=True,
+            width=420,
+            height=140,
+        ):
+            dpg.add_text("Something went wrong.", tag="error_modal_text", wrap=380)
+            dpg.add_spacer(height=10)
+            dpg.add_button(label="OK", callback=lambda: dpg.hide_item("error_modal"))
+
+    def _show_error(self, message):
+        dpg.set_value("error_modal_text", message)
+        dpg.show_item("error_modal")
+
     def _compute_portfolio_layout(self):
         width, height = dpg.get_item_rect_size("portfolio_window")
 
@@ -191,13 +253,11 @@ class PortfolioLab:
 
         # self.gap_x between each card, self.outer_pad_x between cards and window edge
         available_width = width - (self.gap_x * 4) - (self.outer_pad_x * 2)
-        available_height = height - self.gap_y - 2 * self.outer_pad_y
 
-        self.card_w = int(available_width / 5.0)
-        self.card_h = int(available_height / 2.0)
+        self.card_w = self.screen_width * (1 / 3) - WINDOW_GAP - 5
+        self.card_h = int(height / 11.0) + 3
 
         self.rounding = int(min(self.card_w, self.card_h) * CARD_ROUNDING)
-
 
     def _get_card_pos(self, idx):
         idx = idx[6]
@@ -207,141 +267,208 @@ class PortfolioLab:
         y = self.outer_pad_y + row * (self.card_h + self.gap_y)
         return x, y
 
-
-    def _draw_card(self, tag, title, in_label, rec_label, drift, high, callback, idx, default_value=0.0):
-        x, y = self._get_card_pos(idx)
-
-        if high is None:
-            # Balanced (+/- 5%)
-            participation = f"ASSET CLASS BALANCED!"
-            pass
-        elif high:
-            # More than 5% over contributed
-            participation = f"OVERPARTICIPATING: {drift:.3f}%"
-            pass
-        else:
-            # Less then 95% under contributed
-            participation = f"UNDERPARTICIPATING: {drift:.3f}%"
-
-        with use_parent("portfolio_window"):
-            with dpg.child_window(
-                tag=f"{tag}_window",
-                pos=(x, y),
-                width=self.card_w,
-                height=self.card_h,
-                no_scrollbar=True,
-                no_scroll_with_mouse=True,
-                ) as child_window:
-                # with dpg.drawlist(width=self.card_w, height=self.card_h):
-                #     dpg.draw_rectangle(
-                #         (0, 0),
-                #         (self.card_w, self.card_h),
-                #         color=(70, 70, 70, 255),
-                #         fill=(35, 35, 35, 255),
-                #         rounding=self.rounding,
-                #         thickness=1,
-                #     )
-
-                dpg.add_text(
-                    default_value=title,
-                    pos=(CARD_INTERNAL_PAD, CARD_INTERNAL_PAD),
-                    tag=f"{tag}_title"
-                )
-
-                dpg.add_text(
-                    default_value=in_label,
-                    pos=(CARD_INTERNAL_PAD, CARD_INTERNAL_PAD + SMALL_TEXT_PAD),
-                    tag=f"{tag}_main"
-                )
-
-                dpg.add_text(
-                    default_value=rec_label,
-                    pos=(CARD_INTERNAL_PAD, CARD_INTERNAL_PAD + 2 * SMALL_TEXT_PAD),
-                    tag=f"{tag}_rec",
-                )
-
-                dpg.add_text(
-                    default_value=participation,
-                    pos=(CARD_INTERNAL_PAD, CARD_INTERNAL_PAD + 3 * SMALL_TEXT_PAD),
-                    tag=f"{tag}_participation"
-                )
-
-                dpg.add_input_double(
-                    pos=(CARD_INTERNAL_PAD, CARD_INTERNAL_PAD + 4 * SMALL_TEXT_PAD),
-                    tag=f"{tag}_input",
-                    label="",
-                    width=int(self.card_w * 0.4),
-                    step=0,
-                    step_fast=0,
-                    default_value=default_value,
-                    min_value=0.0,
-                    callback=callback
-                )
-
-                dpg.bind_item_font(f"{tag}_title", self.fonts["medium"])
-                dpg.bind_item_font(f"{tag}_main", self.fonts["small"])
-                dpg.bind_item_font(f"{tag}_rec", self.fonts["small"])
-                dpg.bind_item_font(f"{tag}_participation", self.fonts["small"])
-
-            with dpg.theme() as child_theme:
-                with dpg.theme_component(dpg.mvChildWindow):
-                    # Change background color (RGBA)
-                    dpg.add_theme_color(dpg.mvThemeCol_ChildBg, (35, 35, 35, 255))
-            dpg.bind_item_theme(child_window, child_theme)
-
-            # dpg.bind_item_theme(f"{tag}_window", self.transparent_child_theme)
-
-
     def _build_portfolio_window(self):
         self._compute_portfolio_layout()
 
-        for tag, asset in self.asset_map.items():
-            pf_val = self.state['portfolio_value']
+        with use_parent("portfolio_window"):
+            with dpg.group(horizontal=False):
+                for tag, asset in self.asset_map.items():
+                    pf_val = self.state['portfolio_value']
 
-            in_val = self.state['user_portfolio'][asset]
-            rec_val = pf_val * self.state['rec_portfolio'][asset]
+                    in_val = self.state['user_portfolio'][asset]
+                    rec_val = pf_val * self.state['rec_portfolio'][asset]
 
-            frac_in_val = self.state['user_portfolio_fractional'][asset]
-            frac_rec_val = self.state['rec_portfolio'][asset]
+                    frac_in_val = self.state['user_portfolio_fractional'][asset]
+                    frac_rec_val = self.state['rec_portfolio'][asset]
 
-            drift, high = self._overunder(frac_in_val, frac_rec_val)
+                    drift, high = self._overunder(frac_in_val, frac_rec_val)
 
-            self._draw_card(
-                tag=tag,
-                title=asset,
-                in_label=f"IN: ${in_val:.2f} / {(frac_in_val * 100):.2f}%",
-                rec_label=f"REC: ${rec_val:.2f} / {(frac_rec_val * 100):.2f}%",
-                drift=drift,
-                high=high,
-                callback=self._update_card_states,
-                idx=tag,
-                default_value=in_val
-            )
+                    if high is None:
+                        # Balanced (+/- 5%)
+                        participation = f"Asset Class Balanced!"
+                        pass
+                    elif high:
+                        # More than 5% over contributed
+                        participation = f"Overparticipating: {drift:.3f}%"
+                        pass
+                    else:
+                        # Less then 95% under contributed
+                        participation = f"Underparticipating: {drift:.3f}%"
+
+                    with dpg.child_window(
+                        tag=f"{tag}_window",
+                        width=self.screen_width * (1 / 3) - WINDOW_GAP - 5,
+                        height=self.card_h,
+                        no_scrollbar=True,
+                        no_scroll_with_mouse=True,
+                    ) as child_window:
+                        child_height = self.card_h - 15
+
+                        with dpg.group(horizontal=True):
+                            with dpg.child_window(
+                                width=50,
+                                height=child_height,
+                                no_scrollbar=True,
+                                no_scroll_with_mouse=True,
+                            ) as box_1:
+                                dpg.add_text(
+                                    default_value=asset,
+                                    tag=f"{tag}_title"
+                                )
+
+                            with dpg.child_window(
+                                width=(self.card_w - 50) / 3,
+                                height=child_height,
+                                no_scrollbar=True,
+                                no_scroll_with_mouse=True,
+                            ) as box_2:
+                                with dpg.group(horizontal=False):
+                                    with dpg.group(horizontal=True) as in_group:
+                                        dpg.add_text(
+                                            default_value=f"IN: $"
+                                        )
+                                        dpg.add_text(
+                                            default_value=f"{in_val:.2f}",
+                                            tag=f"{tag}_main_1"
+                                        )
+                                        dpg.add_text(
+                                            default_value=" / ",
+                                        )
+                                        dpg.add_text(
+                                            default_value=f"{(frac_in_val * 100):.2f}",
+                                            tag=f"{tag}_main_2"
+                                        )
+                                        dpg.add_text(
+                                            default_value="%"
+                                        )
+
+                                    with dpg.group(horizontal=True) as rec_group:
+                                        dpg.add_text(
+                                            default_value=f"REC: $"
+                                        )
+                                        dpg.add_text(
+                                            default_value=f"{rec_val:.2f}",
+                                            tag=f"{tag}_rec_1",
+                                        )
+                                        dpg.add_text(
+                                            default_value=" / "
+                                        )
+                                        dpg.add_text(
+                                            default_value=f"{(frac_rec_val * 100):.2f}",
+                                            tag=f"{tag}_rec_2"
+                                        )
+                                        dpg.add_text(
+                                            default_value="%"
+                                        )
+
+                            with dpg.child_window(
+                                width=(self.card_w - 125) / 2,
+                                height=child_height,
+                                no_scrollbar=True,
+                                no_scroll_with_mouse=True,
+                            ) as box_3:
+                                dpg.add_text(
+                                    default_value=participation,
+                                    tag=f"{tag}_participation"
+                                )
+
+                            with dpg.child_window(
+                                height=child_height,
+                                no_scrollbar=True,
+                                no_scroll_with_mouse=True,
+                            ) as box_4:
+                                dpg.add_input_double(
+                                    tag=f"{tag}_input",
+                                    label="",
+                                    # width=int(self.card_w * 0.04),
+                                    step=0,
+                                    step_fast=0,
+                                    default_value=in_val,
+                                    min_value=0.0,
+                                    callback=self._update_card_states
+                                )
+
+                            dpg.bind_item_theme(box_1, self.fg_theme)
+                            dpg.bind_item_theme(box_2, self.fg_theme)
+                            dpg.bind_item_theme(box_3, self.fg_theme)
+                            dpg.bind_item_theme(box_4, self.fg_theme)
+
+                            with dpg.theme() as tight_text_theme:
+                                with dpg.theme_component(dpg.mvAll):
+                                    dpg.add_theme_style(dpg.mvStyleVar_ItemSpacing, 2, 0)
+
+                            dpg.bind_item_theme(in_group, tight_text_theme)
+                            dpg.bind_item_theme(rec_group, tight_text_theme)
+
+                            dpg.bind_item_font(f"{tag}_title", self.fonts["title"])
+                            dpg.bind_item_font(f"{tag}_main_1", self.fonts["body"])
+                            dpg.bind_item_font(f"{tag}_main_2", self.fonts["body"])
+                            dpg.bind_item_font(f"{tag}_rec_1", self.fonts["body"])
+                            dpg.bind_item_font(f"{tag}_rec_2", self.fonts["body"])
+                            dpg.bind_item_font(f"{tag}_participation", self.fonts["body"])
+
+                    # with dpg.theme() as child_theme:
+                    #     with dpg.theme_component(dpg.mvChildWindow):
+                    #         # Change background color (RGBA)
+                    #         dpg.add_theme_color(dpg.mvThemeCol_ChildBg, (35, 35, 35, 255))
+                    dpg.bind_item_theme(child_window, self.mid_theme)
 
 
     def _build_sim_window(self):
         with use_parent('simulation_window'):
-            with dpg.group():
+            with dpg.group(tag="sim_group"):
                 with dpg.child_window(
                     width=-1,
                     height=self.screen_height * SIM_WINDOW_SIZE,
+                    no_scroll_with_mouse=True,
+                    no_scrollbar=True,
                     border=True,
                     tag='sim_plot_window'
                     ):
                     with dpg.plot(
                         label="Simulation Plot",
                         width=-1,
-                        height=-1,
+                        height=self.screen_height * SIM_WINDOW_SIZE - 60,
                         tag="sim_plot"
                         ): # width=-1 auto-expands
                         dpg.add_plot_legend()
+
                         dpg.add_plot_axis(dpg.mvXAxis, label="Trading Days", tag="sim_plot_x_axis", auto_fit=True)
                         dpg.add_plot_axis(dpg.mvYAxis, label="Value ($)", tag="sim_plot_y_axis", auto_fit=True)
 
-                # dpg.add_spacer(height=20)
-                with dpg.group(horizontal=True):
-                    dpg.add_button(label="Save Portfolio", callback=self._save_portfolio)
-                    dpg.add_button(label="Load Portfolio", callback=self._load_portfolio)
+                    dpg.add_spacer(height=5)
+                    with dpg.group(horizontal=True):
+                        dpg.add_spacer(width=35)
+
+                        with dpg.file_dialog(
+                            directory_selector=False,
+                            show=False,
+                            callback=self._load_portfolio,
+                            tag="load_dialog",
+                            width=700,
+                            height=400
+                        ):
+                            dpg.add_file_extension(".json", color=(0, 255, 0, 255))
+
+                        with dpg.file_dialog(
+                            directory_selector=False,
+                            show=False,
+                            callback=self._save_portfolio,
+                            tag="save_dialog",
+                            width=700,
+                            height=400
+                        ):
+                            dpg.add_file_extension(".json", color=(0, 255, 0, 255))
+
+                        dpg.add_button(label="Save Portfolio", callback=lambda: dpg.show_item("save_dialog"))
+                        dpg.add_button(label="Load Portfolio", callback=lambda: dpg.show_item("load_dialog"))
+
+                        dpg.add_spacer(width=10)
+
+                        dpg.add_button(label="Clear Portfolio", callback=self._clear_portfolio)
+                        dpg.add_button(label="Optimize Portfolio", callback=self._construct_portfolio)
+
+                dpg.add_spacer(height=20)
 
                 # Here we can define the manual data entry
                 dpg.add_slider_int(
@@ -354,7 +481,7 @@ class PortfolioLab:
                     default_value=252
                     )
                 dpg.add_slider_int(
-                    label=f"Simulation Period [1, {floor(self.T / 252)}] (years)",
+                    label=f"Simulation Period (years)",
                     tag="sim_period",
                     min_value=1,
                     max_value=floor(self.T / 252),
@@ -389,30 +516,88 @@ class PortfolioLab:
                     format="%.12f",
                     callback=self._update_return_margin
                 )
-                dpg.add_text(default_value=self.state['portfolio_value'], tag='pf_value')
-                dpg.add_button(label="Optimize Portfolio", callback=self._construct_portfolio)
+                # dpg.add_text(default_value=f"Portfolio Value: {self.state['portfolio_value']}", tag='pf_value')
 
+            dpg.bind_item_font("sim_group", self.fonts['sim_body'])
+
+        self._build_error_modal()
     # |----------------------------- Window Initialization -----------------------------|
 
 
     # |----------------------------- Callback Functions --------------------------------|
-    def _save_portfolio(self):
-        with open("app_state.json", "w") as f:
+    def _save_portfolio(self, sender, app_data):
+        path = str(app_data["file_path_name"])
+
+        if not path.lower().endswith(".json"):
+            path += ".json"
+
+        with open(path, "w") as f:
             json.dump(self.state, f, indent=4)
 
-    def _load_portfolio(self):
-        with open("app_state.json", "r") as f:
-            self.state = json.load(f)
+    def _load_portfolio(self, sender, app_data):
+        try:
+            with open(app_data["file_path_name"], "r") as f:
+                loaded_data = json.load(f)
+
+                # Unlike the initial automatic load, now the UI exists so we should
+                #   try to update the UI to reflect this loaded data immediately.
+                # |------------------------------- Load Lookback -------------------------------|
+                self.state['lookback'] = lookback = loaded_data['lookback']
+                sim_max = floor((self.T - lookback) / 252)
+                dpg.set_value("sim_period", sim_max)
+                dpg.configure_item("sim_period", max_value=sim_max, label=f"Simulation Period [1, {sim_max}] (years)")
+                self._estimate_mu_sigma()
+                # |------------------------------- Load Lookback -------------------------------|
+
+
+                # |-------------------------- Redo Prior Optimization --------------------------|
+                self.state['user_portfolio_fractional'] = loaded_data['user_portfolio_fractional']
+                self.state['user_portfolio'] = loaded_data['user_portfolio']
+                self.state['portfolio_value'] = loaded_data['portfolio_value']
+
+                self.state['req_return_daily'] = loaded_data['req_return_daily']
+                self.state['min_risk'] = list(loaded_data['min_risk'])
+
+                # No sender, no app data, it's a routine.
+                self._construct_portfolio(None, None)
+                # |-------------------------- Redo Prior Optimization --------------------------|
+                self._update_all_other_cards()
+        except json.JSONDecodeError:
+            self._show_error("That file is not valid JSON.")
+        except FileNotFoundError:
+            self._show_error("The selected file could not be found.")
+        except KeyError as e:
+            self._show_error(f"The file is missing required portfolio data: {e}")
+        except Exception as e:
+            self._show_error(f"Failed to load portfolio: {e}")
+
+    def _clear_portfolio(self):
+        equal_weight = 1.0 / self.N
+
+        self.state['rec_portfolio'] = {name: equal_weight for name in self.asset_names}
+        self.state['user_portfolio'] = {name: equal_weight * self.starting_value for name in self.asset_names}
+        self.state['user_portfolio_fractional'] = {name: equal_weight for name in self.asset_names}
+        self.state['portfolio_value'] = self.starting_value
+
+        dpg.delete_item('sim_plot_y_axis', children_only=True, slot=1)
+
         self._update_all_other_cards()
 
     def _lookback_update(self, sender, app_data, user_data):
+        """
+        User requested different lookback length, so we need to update
+            the max sim period and recalculate mu and sigma.
+
+        user_data = self.T = total number of days in the data set
+        app_data = the lookback length that the user requested
+        """
         self.state['lookback'] = lookback = app_data
         sim_max = floor((user_data - lookback) / 252)
 
         if (dpg.get_value("sim_period") > sim_max):
             dpg.set_value("sim_period", sim_max)
 
-        dpg.configure_item("sim_period", max_value=sim_max, label=f"Simulation Period [1, {sim_max}] (years)")
+        dpg.configure_item("sim_period", max_value=sim_max, label=f"Simulation Period (years)")
 
         # Need to recalculate, lookback changed
         self._estimate_mu_sigma()
@@ -426,7 +611,7 @@ class PortfolioLab:
                 dpg.add_text("ERROR: Requested sim period exceeds available days - lookback period")
                 dpg.set_value(sender, 1)
 
-        dpg.configure_item(sender, max_value=sim_max, label=f"Simulation Period [1, {sim_max}] (years)")
+        dpg.configure_item(sender, max_value=sim_max, label=f"Simulation Period(years)")
 
 
     def _update_desired_ret(self, sender, app_data):
@@ -466,6 +651,7 @@ class PortfolioLab:
 
         self._simulate_portfolio()
         self._update_sim_plot()
+        self._save_portfolio(0, {"file_path_name": self.CWD / "app_state.json"})
 
     def _update_return_margin(self, sender, app_data):
         self.state["eps"] = app_data
@@ -507,7 +693,7 @@ class PortfolioLab:
             if DEBUG_OUTPUT:
                 print("WHY WOULD YOU OPEN A PORTFOLIO OF $0 YOU ABSOLUTE MONGOLOID")
 
-        dpg.configure_item('pf_value', default_value=pf_val)
+        # dpg.configure_item('pf_value', default_value=pf_val)
 
         # in_val = app_data
         if app_data > 0.00:
@@ -517,13 +703,15 @@ class PortfolioLab:
 
         if rec_ref[asset_name] == 0.00:
             if app_data > 0.00:
-                dpg.configure_item(f"asset_{asset_idx}_participation", default_value=f"OVERPARTICIPATING")
+                dpg.configure_item(f"asset_{asset_idx}_participation", default_value=f"Overparticipating")
             else:
-                dpg.configure_item(f"asset_{asset_idx}_participation", default_value=f"ASSET CLASS BALANCED!")
+                dpg.configure_item(f"asset_{asset_idx}_participation", default_value=f"Asset Class Balanced!")
 
             rec_val = 0.00
-            dpg.configure_item(f"asset_{asset_idx}_main", default_value=f"IN: ${app_data:.2f} / {(frac_in_val * 100):.2f}%")
-            dpg.configure_item(f"asset_{asset_idx}_rec", default_value=f"REC: ${rec_val:.2f} / {(frac_rec_val * 100):.2f}%")
+            dpg.configure_item(f"asset_{asset_idx}_main_1", default_value=f"{pf_ref[asset_name]:.2f}")
+            dpg.configure_item(f"asset_{asset_idx}_main_2", default_value=f"{(frac_in_val * 100):.2f}")
+            dpg.configure_item(f"asset_{asset_idx}_rec_1", default_value=f"{rec_val:.2f}")
+            dpg.configure_item(f"asset_{asset_idx}_rec_2", default_value=f"0.00")
         else:
             rec_val = pf_val * rec_ref[asset_name]
             frac_rec_val = rec_ref[asset_name]
@@ -531,14 +719,16 @@ class PortfolioLab:
 
             change, high = self._overunder(frac_in_val, frac_rec_val)
             if high is None:
-                dpg.configure_item(f"asset_{asset_idx}_participation", default_value=f"ASSET CLASS BALANCED!")
+                dpg.configure_item(f"asset_{asset_idx}_participation", default_value=f"Asset Class Balanced!")
             elif high:
-                dpg.configure_item(f"asset_{asset_idx}_participation", default_value=f"OVERPARTICIPATING: {change:.2f}%")
+                dpg.configure_item(f"asset_{asset_idx}_participation", default_value=f"Overparticipating: {change:.2f}%")
             else:
-                dpg.configure_item(f"asset_{asset_idx}_participation", default_value=f"UNDERPARTICIPATING: {change:.2f}%")
+                dpg.configure_item(f"asset_{asset_idx}_participation", default_value=f"Underparticipating: {change:.2f}%")
 
-            dpg.configure_item(f"asset_{asset_idx}_main", default_value=f"IN: ${app_data:.2f} / {(frac_in_val * 100):.2f}%")
-            dpg.configure_item(f"asset_{asset_idx}_rec", default_value=f"REC: ${rec_val:.2f} / {(frac_rec_val * 100):.2f}%")
+            dpg.configure_item(f"asset_{asset_idx}_main_1", default_value=f"{pf_ref[asset_name]:.2f}")
+            dpg.configure_item(f"asset_{asset_idx}_main_2", default_value=f"{(frac_in_val * 100):.2f}")
+            dpg.configure_item(f"asset_{asset_idx}_rec_1", default_value=f"{rec_val:.2f}")
+            dpg.configure_item(f"asset_{asset_idx}_rec_2", default_value=f"{(frac_rec_val * 100):.2f}")
 
         self._update_all_other_cards(sender[0:7])
 
@@ -550,19 +740,23 @@ class PortfolioLab:
         rec_ref = self.state['rec_portfolio']
         pf_val = self.state['portfolio_value'] = sum(self.state['user_portfolio'].values())
 
+        # For asset_{i}, ticker_name
         for internal_name, real_name in self.asset_map.items():
             if internal_name != skip:
                 frac_pf_ref[real_name] = pf_ref[real_name] / pf_val
 
                 if rec_ref[real_name] == 0.00:
+                    frac_in_val = frac_pf_ref[real_name]
                     if pf_ref[real_name] > 0.00:
-                        dpg.configure_item(f"{internal_name}_participation", default_value=f"OVERPARTICIPATING")
+                        dpg.configure_item(f"{internal_name}_participation", default_value=f"Overparticipating")
                     else:
-                        dpg.configure_item(f"{internal_name}_participation", default_value=f"ASSET CLASS BALANCED!")
+                        dpg.configure_item(f"{internal_name}_participation", default_value=f"Asset Class Balanced!")
 
                     rec_val = 0.00
-                    dpg.configure_item(f"{internal_name}_main", default_value=f"IN: ${pf_ref[real_name]:.2f} / {(frac_in_val * 100):.2f}%")
-                    dpg.configure_item(f"{internal_name}_rec", default_value=f"REC: ${rec_val:.2f} / {(frac_rec_val * 100):.2f}%")
+                    dpg.configure_item(f"{internal_name}_main_1", default_value=f"{pf_ref[real_name]:.2f}")
+                    dpg.configure_item(f"{internal_name}_main_2", default_value=f"{(frac_in_val * 100):.2f}")
+                    dpg.configure_item(f"{internal_name}_rec_1", default_value=f"{rec_val:.2f}")
+                    dpg.configure_item(f"{internal_name}_rec_2", default_value=f"0.00")
                 else:
                     rec_val = pf_val * rec_ref[real_name]
                     frac_rec_val = rec_ref[real_name]
@@ -570,14 +764,16 @@ class PortfolioLab:
 
                     change, high = self._overunder(frac_in_val, frac_rec_val)
                     if high is None:
-                        dpg.configure_item(f"{internal_name}_participation", default_value=f"ASSET CLASS BALANCED!")
+                        dpg.configure_item(f"{internal_name}_participation", default_value=f"Asset Class Balanced!")
                     elif high:
-                        dpg.configure_item(f"{internal_name}_participation", default_value=f"OVERPARTICIPATING: {change:.2f}%")
+                        dpg.configure_item(f"{internal_name}_participation", default_value=f"Overparticipating: {change:.2f}%")
                     else:
-                        dpg.configure_item(f"{internal_name}_participation", default_value=f"UNDERPARTICIPATING: {change:.2f}%")
+                        dpg.configure_item(f"{internal_name}_participation", default_value=f"Underparticipating: {change:.2f}%")
 
-                    dpg.configure_item(f"{internal_name}_main", default_value=f"IN: ${pf_ref[real_name]:.2f} / {(frac_in_val * 100):.2f}%")
-                    dpg.configure_item(f"{internal_name}_rec", default_value=f"REC: ${rec_val:.2f} / {(frac_rec_val * 100):.2f}%")
+                    dpg.configure_item(f"{internal_name}_main_1", default_value=f"{pf_ref[real_name]:.2f}")
+                    dpg.configure_item(f"{internal_name}_main_2", default_value=f"{(frac_in_val * 100):.2f}")
+                    dpg.configure_item(f"{internal_name}_rec_1", default_value=f"{rec_val:.2f}")
+                    dpg.configure_item(f"{internal_name}_rec_2", default_value=f"{(frac_rec_val * 100):.2f}")
 
 
     def _estimate_mu_sigma(self):
@@ -664,6 +860,7 @@ class PortfolioLab:
             # The user hasn't selected a value yet.
             #   - Probably notify via popup and abort optimization
             print("ERROR: R_target uninitialized")
+            self._show_error("Target return unspecified, wiggle the risk slider.")
             return None
 
         # Trying to minimize the work for OSQP to get it to work hopefully
@@ -692,6 +889,8 @@ class PortfolioLab:
                 print(f"Optimization was {problem.status}")
             if VERBOSE_DEBUG_OUTPUT:
                 print(f"Solver statistics: {problem.solver_stats}")
+
+            self._show_error("The optimizer was unable to solve for the requested return. Please Request a lower risk level or increase return margin.")
             return None
 
         w = np.asarray(w.value).ravel()
@@ -734,7 +933,7 @@ class PortfolioLab:
         problem = cp.Problem(objective, constraints)
         problem.solve(solver="SCS", verbose=False)
 
-        self.state['min_risk'] = np.asarray(w.value).ravel()
+        self.state['min_risk'] = np.asarray(w.value).ravel().tolist()
         # End Min Risk Portfolio
 
         return ret_val
@@ -781,7 +980,7 @@ class PortfolioLab:
         rec_risk = np.array(list(self.state['rec_portfolio'].values()))
         rec_portfolio = rec_risk * pf_val
 
-        min_risk = self.state['min_risk']
+        min_risk = np.asarray(self.state['min_risk'])
         min_portfolio = min_risk * pf_val
 
         Sigma = np.asarray(self.state['sigma'])
@@ -799,15 +998,15 @@ class PortfolioLab:
         for _, row in sim_rets.iterrows():
             # Assumes that data is aligned, matching mu in markowitz.py
             portfolios = portfolios * (1.0 + row[self.asset_names].values)
-            pfs_over_time.append(portfolios.sum(axis=1).copy())
+            pfs_over_time.append(portfolios.sum(axis=1).tolist())
 
         final_values = portfolios.sum(axis=1)
 
         self.state['simulated_portfolios'] = {
-            "user_portfolio": final_values[0],
-            "rec_portfolio" : final_values[1],
-            "min_portfolio" : final_values[2],
-            "max_portfolio" : final_values[3]
+            "user_portfolio": float(final_values[0]),
+            "rec_portfolio" : float(final_values[1]),
+            "min_portfolio" : float(final_values[2]),
+            "max_portfolio" : float(final_values[3])
         }
 
         self.state['portfolios_over_time'] = pfs_over_time
@@ -830,10 +1029,31 @@ class PortfolioLab:
 
         cols = list(zip(*pfs_over_time))
 
-        dpg.add_line_series(x=x, y=cols[0], parent="sim_plot_y_axis", label="User Portfolio")
-        dpg.add_line_series(x=x, y=cols[1], parent="sim_plot_y_axis", label="Recommended Portfolio")
-        dpg.add_line_series(x=x, y=cols[2], parent="sim_plot_y_axis", label="Min Portfolio")
-        dpg.add_line_series(x=x, y=cols[3], parent="sim_plot_y_axis", label="Max Portfolio")
+        user_series = dpg.add_line_series(x=x, y=cols[0], parent="sim_plot_y_axis", label="User Portfolio")
+        rec_series  = dpg.add_line_series(x=x, y=cols[1], parent="sim_plot_y_axis", label="Recommended Portfolio")
+        min_series  = dpg.add_line_series(x=x, y=cols[2], parent="sim_plot_y_axis", label="Min Portfolio")
+        max_series  = dpg.add_line_series(x=x, y=cols[3], parent="sim_plot_y_axis", label="Max Portfolio")
+
+        with dpg.theme() as user_series_theme:
+            with dpg.theme_component(dpg.mvLineSeries):
+                dpg.add_theme_color(dpg.mvPlotCol_Line, USER, category=dpg.mvThemeCat_Plots)
+
+        with dpg.theme() as rec_series_theme:
+            with dpg.theme_component(dpg.mvLineSeries):
+                dpg.add_theme_color(dpg.mvPlotCol_Line, REC, category=dpg.mvThemeCat_Plots)
+
+        with dpg.theme() as min_series_theme:
+            with dpg.theme_component(dpg.mvLineSeries):
+                dpg.add_theme_color(dpg.mvPlotCol_Line, MIN, category=dpg.mvThemeCat_Plots)
+
+        with dpg.theme() as max_series_theme:
+            with dpg.theme_component(dpg.mvLineSeries):
+                dpg.add_theme_color(dpg.mvPlotCol_Line, MAX, category=dpg.mvThemeCat_Plots)
+
+        dpg.bind_item_theme(user_series, user_series_theme)
+        dpg.bind_item_theme(rec_series, rec_series_theme)
+        dpg.bind_item_theme(min_series, min_series_theme)
+        dpg.bind_item_theme(max_series, max_series_theme)
     # |------------------------------- INTERNALIZED ----------------------------------|
 
 
@@ -848,31 +1068,53 @@ class PortfolioLab:
         portfolio_window = dpg.add_window(
                                         tag="portfolio_window",
                                         pos=(0, 0),
-                                        width=self.screen_width * (2 / 3),
+                                        width=self.screen_width * (1 / 3) + 5,
                                         height=self.screen_height,
                                         no_move=True,
-                                        no_title_bar=True
+                                        no_resize=True,
+                                        no_title_bar=True,
+                                        no_scrollbar=True,
+                                        no_scroll_with_mouse=True,
                                         )
 
         simulation_window = dpg.add_window(
                                         tag='simulation_window',
-                                        pos=(self.screen_width * (2 / 3) + WINDOW_GAP, 0),
-                                        width=(self.screen_width * (1 / 3) - WINDOW_GAP),
+                                        pos=(self.screen_width * (1 / 3) + WINDOW_GAP, 0),
+                                        width=(self.screen_width * (2 / 3) - WINDOW_GAP),
                                         height=self.screen_height,
                                         no_move=True,
+                                        no_resize=True,
                                         no_title_bar=True,
+                                        no_scrollbar=True,
+                                        no_scroll_with_mouse=True,
                                         )
-
-        with dpg.theme() as portfolio_window_theme:
-            with dpg.theme_component(dpg.mvAll):
-                dpg.add_theme_style(dpg.mvStyleVar_ItemSpacing, 0, 0, category=dpg.mvThemeCat_Core)
-
-        dpg.bind_item_theme(portfolio_window, portfolio_window_theme)
 
 
     def build_windows(self):
+        # Background (main windows)
+        with dpg.theme() as self.bg_theme:
+            with dpg.theme_component(dpg.mvAll):
+                dpg.add_theme_color(dpg.mvThemeCol_WindowBg, (15, 15, 18, 255))
+
+
+        # Midground (rows / main child windows)
+        with dpg.theme() as self.mid_theme:
+            with dpg.theme_component(dpg.mvChildWindow):
+                dpg.add_theme_color(dpg.mvThemeCol_ChildBg, (32, 32, 36, 255))
+                # dpg.add_theme_style(dpg.mvStyleVar_ChildBorderSize, 0)
+
+
+        # Foreground (inner semantic boxes)
+        with dpg.theme() as self.fg_theme:
+            with dpg.theme_component(dpg.mvChildWindow):
+                dpg.add_theme_color(dpg.mvThemeCol_ChildBg, (38, 38, 42, 255))
+                # dpg.add_theme_style(dpg.mvStyleVar_ChildBorderSize, 0)
+
         self._build_portfolio_window()
         self._build_sim_window()
+
+        dpg.bind_item_theme("portfolio_window", self.bg_theme)
+        dpg.bind_item_theme("simulation_window", self.bg_theme)
     # |------------------------------- EXTERNALIZED ----------------------------------|
     # |----------------------------- Helper Functions --------------------------------|
 # |---------------------------------- App Class ----------------------------------|
@@ -914,6 +1156,9 @@ def main():
     dpg.render_dearpygui_frame()
 
     pl.build_windows()
+
+    if pl.loaded_successfully:
+        pl._construct_portfolio(None, None)
 
     if SHOW_DEMO:
         # Demo only shows up *inside* of the viewport we defined for the main window
