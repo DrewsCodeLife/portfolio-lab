@@ -135,6 +135,7 @@ class PortfolioLab:
             "req_return_daily"      : None, # Converted to daily from UI annualized request
             "eps"                   : 1e-12,
             "w_min"                 : 0.01,
+            "sim_period"            : 252 - self.T
         }
         # |------------------------------ Internal Model ---------------------------------|
 
@@ -305,17 +306,22 @@ class PortfolioLab:
                         child_height = self.card_h - 15
 
                         with dpg.group(horizontal=True):
+                            y_offset = ((self.card_h - LARGE_TEXT_SIZE) / 3)
+
                             with dpg.child_window(
                                 width=50,
                                 height=child_height,
                                 no_scrollbar=True,
                                 no_scroll_with_mouse=True,
                             ) as box_1:
+                                # 6 Derived experimentally, centers "VBMFX"
                                 dpg.add_text(
+                                    pos=(6, y_offset),
                                     default_value=asset,
                                     tag=f"{tag}_title"
                                 )
 
+                            # These guys are already centered 'cuz god is just.
                             with dpg.child_window(
                                 width=(self.card_w - 50) / 3,
                                 height=child_height,
@@ -361,6 +367,7 @@ class PortfolioLab:
                                             default_value="%"
                                         )
 
+                            y_offset = (self.card_h - MEDIUM_TEXT_SIZE) / 3
                             with dpg.child_window(
                                 width=(self.card_w - 125) / 2,
                                 height=child_height,
@@ -368,16 +375,19 @@ class PortfolioLab:
                                 no_scroll_with_mouse=True,
                             ) as box_3:
                                 dpg.add_text(
+                                    pos=(5, y_offset),
                                     default_value=participation,
                                     tag=f"{tag}_participation"
                                 )
 
+                            y_offset = y_offset - 1  # It's a little too low otherwise
                             with dpg.child_window(
                                 height=child_height,
                                 no_scrollbar=True,
                                 no_scroll_with_mouse=True,
                             ) as box_4:
                                 dpg.add_input_double(
+                                    pos=(12.5, y_offset),
                                     tag=f"{tag}_input",
                                     label="",
                                     # width=int(self.card_w * 0.04),
@@ -438,7 +448,7 @@ class PortfolioLab:
 
                     dpg.add_spacer(height=5)
                     with dpg.group(horizontal=True):
-                        dpg.add_spacer(width=35)
+                        # dpg.add_spacer(width=35)
 
                         with dpg.file_dialog(
                             directory_selector=False,
@@ -460,64 +470,96 @@ class PortfolioLab:
                         ):
                             dpg.add_file_extension(".json", color=(0, 255, 0, 255))
 
-                        dpg.add_button(label="Save Portfolio", callback=lambda: dpg.show_item("save_dialog"))
-                        dpg.add_button(label="Load Portfolio", callback=lambda: dpg.show_item("load_dialog"))
+                        width = dpg.get_item_width('simulation_window')
+                        left_pad = ((width - 4 * 125 - 4*50) / 2) - 15
 
-                        dpg.add_spacer(width=10)
+                        with dpg.group(horizontal=True):
+                            dpg.add_spacer(width=left_pad)
+                            dpg.add_button(
+                                width=125,
+                                label="Save Portfolio",
+                                callback=lambda: dpg.show_item("save_dialog")
+                            )
+                            dpg.add_spacer(width=50)
+                            dpg.add_button(
+                                width=125,
+                                label="Load Portfolio",
+                                callback=lambda: dpg.show_item("load_dialog"),
+                            )
 
-                        dpg.add_button(label="Clear Portfolio", callback=self._clear_portfolio)
-                        dpg.add_button(label="Optimize Portfolio", callback=self._construct_portfolio)
+                            dpg.add_spacer(width=50)
 
-                dpg.add_spacer(height=20)
+                            dpg.add_button(
+                                width=125,
+                                label="Clear Portfolio",
+                                callback=self._clear_portfolio
+                            )
+                            dpg.add_spacer(width=50)
+                            dpg.add_button(
+                                width=125,
+                                label="Optimize Portfolio",
+                                callback=self._construct_portfolio
+                            )
 
-                # Here we can define the manual data entry
-                dpg.add_slider_int(
-                    label="Lookback period (days)",
-                    tag="lookback",
-                    min_value=252,
-                    max_value=(self.T - 252),
-                    callback=self._lookback_update,
-                    user_data=self.T,
-                    default_value=252
+                with dpg.child_window(
+                    tag='sim_slider_window',
+                    no_scroll_with_mouse=True,
+                    no_scrollbar=True,
+                ):
+                    dpg.add_spacer(height=10)
+                    # Here we can define the manual data entry
+                    dpg.add_slider_int(
+                        label="Lookback period (days)",
+                        tag="lookback",
+                        min_value=252,
+                        max_value=(self.T - 252),
+                        callback=self._lookback_update,
+                        user_data=self.T,
+                        default_value=252,
+                        indent=100
+                        )
+                    dpg.add_slider_int(
+                        label=f"Simulation Period (years)",
+                        tag="sim_period",
+                        min_value=1,
+                        max_value=floor(self.T / 252),
+                        user_data=self.T,
+                        default_value=1,
+                        callback=self._sim_period_update,
+                        indent=100
+                        )
+
+                    dpg.add_slider_float(
+                        label="Low -> High Risk",
+                        tag="desired_ret",
+                        min_value=0.05,
+                        max_value=1.0,
+                        default_value=0.5,
+                        callback=self._update_desired_ret,
+                        indent=100
+                        )
+                    dpg.add_slider_double(
+                        label="Model Minimum Investment",
+                        tag="model_min_investment",
+                        min_value=0.00,
+                        max_value=0.2,
+                        default_value=0.01,
+                        callback=self._update_min_investment,
+                        indent=100
                     )
-                dpg.add_slider_int(
-                    label=f"Simulation Period (years)",
-                    tag="sim_period",
-                    min_value=1,
-                    max_value=floor(self.T / 252),
-                    user_data=self.T,
-                    default_value=1,
-                    callback=self._sim_period_update,
+                    dpg.add_slider_double(
+                        label="Model Return Margin",
+                        tag="model_return_margin",
+                        min_value=1e-12,
+                        max_value=1e-3,
+                        default_value=1e-12,
+                        clamped=True,
+                        format="%.12f",
+                        callback=self._update_return_margin,
+                        indent=100
                     )
-
-                dpg.add_slider_float(
-                    label="Low -> High Risk",
-                    tag="desired_ret",
-                    min_value=0.05,
-                    max_value=1.0,
-                    default_value=0.5,
-                    callback=self._update_desired_ret,
-                    )
-                dpg.add_slider_double(
-                    label="Model Minimum Investment",
-                    tag="model_min_investment",
-                    min_value=0.00,
-                    max_value=0.2,
-                    default_value=0.01,
-                    callback=self._update_min_investment
-                )
-                dpg.add_slider_double(
-                    label="Model Return Margin",
-                    tag="model_return_margin",
-                    min_value=1e-12,
-                    max_value=1e-3,
-                    default_value=1e-12,
-                    clamped=True,
-                    format="%.12f",
-                    callback=self._update_return_margin
-                )
                 # dpg.add_text(default_value=f"Portfolio Value: {self.state['portfolio_value']}", tag='pf_value')
-
+            dpg.bind_item_theme("sim_slider_window", self.mid_theme)
             dpg.bind_item_font("sim_group", self.fonts['sim_body'])
 
         self._build_error_modal()
@@ -610,8 +652,9 @@ class PortfolioLab:
             with dpg.popup(dpg.get_item_parent(sender)):
                 dpg.add_text("ERROR: Requested sim period exceeds available days - lookback period")
                 dpg.set_value(sender, 1)
-
-        dpg.configure_item(sender, max_value=sim_max, label=f"Simulation Period(years)")
+        else:
+            dpg.configure_item(sender, max_value=sim_max, label=f"Simulation Period(years)")
+            self.state['sim_period'] = app_data*252
 
 
     def _update_desired_ret(self, sender, app_data):
@@ -971,9 +1014,7 @@ class PortfolioLab:
     def _simulate_portfolio(self):
         pf_val = self.state['portfolio_value']
 
-        # We don't want to simulate over the same period we trained the model
-        # - Model uses the last 'lookback' rows, so we drop them
-        sim_rets = self.returns.iloc[:-self.state['lookback']]
+        sim_rets = self.returns.iloc[-self.state['sim_period']:]
 
         user_portfolio = np.array(list(self.state['user_portfolio'].values()))
 
@@ -1107,7 +1148,7 @@ class PortfolioLab:
         # Foreground (inner semantic boxes)
         with dpg.theme() as self.fg_theme:
             with dpg.theme_component(dpg.mvChildWindow):
-                dpg.add_theme_color(dpg.mvThemeCol_ChildBg, (38, 38, 42, 255))
+                dpg.add_theme_color(dpg.mvThemeCol_ChildBg, (35, 35, 39, 255))
                 # dpg.add_theme_style(dpg.mvStyleVar_ChildBorderSize, 0)
 
         self._build_portfolio_window()
