@@ -516,7 +516,7 @@ class PortfolioLab:
                         callback=self._lookback_update,
                         user_data=self.T,
                         default_value=252,
-                        indent=100
+                        # indent=100
                         )
                     dpg.add_slider_int(
                         label=f"Simulation Period (years)",
@@ -526,7 +526,7 @@ class PortfolioLab:
                         user_data=self.T,
                         default_value=1,
                         callback=self._sim_period_update,
-                        indent=100
+                        # indent=100
                         )
 
                     dpg.add_slider_float(
@@ -536,7 +536,7 @@ class PortfolioLab:
                         max_value=1.0,
                         default_value=0.5,
                         callback=self._update_desired_ret,
-                        indent=100
+                        # indent=100
                         )
                     dpg.add_slider_double(
                         label="Model Minimum Investment",
@@ -545,7 +545,7 @@ class PortfolioLab:
                         max_value=0.2,
                         default_value=0.01,
                         callback=self._update_min_investment,
-                        indent=100
+                        # indent=100
                     )
                     dpg.add_slider_double(
                         label="Model Return Margin",
@@ -556,7 +556,7 @@ class PortfolioLab:
                         clamped=True,
                         format="%.12f",
                         callback=self._update_return_margin,
-                        indent=100
+                        # indent=100
                     )
                 # dpg.add_text(default_value=f"Portfolio Value: {self.state['portfolio_value']}", tag='pf_value')
             dpg.bind_item_theme("sim_slider_window", self.mid_theme)
@@ -666,8 +666,8 @@ class PortfolioLab:
         #   - max single contribution is the most that a single asset class can participate
         #       accounting for the minimum investment requested of the model
         #   - Offset is a small offset because numbers get weird near the margin
-        #       3*1e-12/2 just seems to be feasible from trial and error.
-        R_max = self.state['R_max'] = ((mu_max * (1.0 - 4 * self.state['w_min'])) - self.state['eps'] * (3/2))
+        #       2e-12 just seems to be feasible from trial and error.
+        R_max = self.state['R_max'] = ((mu_max * (1.0 - 4 * self.state['w_min'])) - self.state['eps'] * (2))
 
         self.state['req_return_daily'] = app_data * R_max
 
@@ -911,9 +911,9 @@ class PortfolioLab:
         R_target = float(R_target)
 
         constraints = [
-            cp.sum(w) == 1,          # fully invested
-            w >= self.state['w_min'],              # long-only, minimum {W_min*100}% participation
-            (-mu) @ w <= -R_target   # target return or larger
+            cp.sum(w) == 1,            # fully invested
+            w >= self.state['w_min'],  # long-only, minimum {W_min*100}% participation
+            (-mu) @ w <= -R_target     # target return or larger
         ]
 
         if DEBUG_OUTPUT:
