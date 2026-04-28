@@ -4,18 +4,8 @@ A portfolio allocation optimization app. Using a Markowitz portfolio optimizer t
 ## Table of Contents
 
 - [Installation](#installation)
-- [Usage](#usage)
 - [TODO](#TODO)
 
 ## Installation
 
-*empty for now*
-
-## Usage
-
-*empty for now*
-
-## TODO
-
-* Proper agnostic pathing
-* requirements.txt for easy venv creation
+Visit the releases page for the most recent release. Portfolio Lab functions as an independent binary, it will generate some files in the parent directory, so I recommend leaving it in the unzipped folder.

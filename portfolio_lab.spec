@@ -1,12 +1,19 @@
 # -*- mode: python ; coding: utf-8 -*-
+from PyInstaller.utils.hooks import collect_data_files
+from PyInstaller.utils.hooks import collect_submodules
+
+datas = [('font', 'font'), ('data/cleaned', 'data/cleaned')]
+hiddenimports = []
+datas += collect_data_files('cvxpy')
+hiddenimports += collect_submodules('cvxpy')
 
 
 a = Analysis(
     ['src\\portfolio_lab.py'],
     pathex=[],
     binaries=[],
-    datas=[],
-    hiddenimports=[],
+    datas=datas,
+    hiddenimports=hiddenimports,
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

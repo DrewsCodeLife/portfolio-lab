@@ -85,8 +85,10 @@ class PortfolioLab:
     # |------------------------------ Internal Model ---------------------------------|
     def __init__(self):
         # |------------------------------ Internal Model ---------------------------------|
-        self.CWD = Path(__file__).parent.parent
+        # self.CWD = Path(__file__).parent.parent
+        self.CWD = Path(__file__).resolve().parent
         self.FONT_FOLDER = self.CWD / "font"
+
 
         self.data    = pd.read_csv(self.CWD / "data" / "cleaned" / "cleaned.csv")
         self.returns = pd.read_csv(self.CWD / "data" / "cleaned" / "asset_daily_returns.csv")
@@ -135,7 +137,7 @@ class PortfolioLab:
             "req_return_daily"      : None, # Converted to daily from UI annualized request
             "eps"                   : 1e-12,
             "w_min"                 : 0.01,
-            "sim_period"            : 252 - self.T
+            "sim_period"            : 252
         }
         # |------------------------------ Internal Model ---------------------------------|
 
@@ -656,6 +658,9 @@ class PortfolioLab:
             dpg.configure_item(sender, max_value=sim_max, label=f"Simulation Period(years)")
             self.state['sim_period'] = app_data*252
 
+        # Need to recalculate, lookback changed (implicitly)
+        self._estimate_mu_sigma()
+
 
     def _update_desired_ret(self, sender, app_data):
         # Convert abstracted risk level to real return value
@@ -669,7 +674,8 @@ class PortfolioLab:
         #       2e-12 just seems to be feasible from trial and error.
         R_max = self.state['R_max'] = ((mu_max * (1.0 - 4 * self.state['w_min'])) - self.state['eps'] * (2))
 
-        self.state['req_return_daily'] = app_data * R_max
+        if app_data is not None:
+            self.state['req_return_daily'] = app_data * R_max
 
 
     def _construct_portfolio(self, sender, app_data):
@@ -826,7 +832,8 @@ class PortfolioLab:
         lookback = self.state['lookback']
 
         if lookback is not None:
-          local_data = self.returns.iloc[-lookback:]
+            # Fetch data for lookback days prior to the sim period
+          local_data = self.returns.iloc[-lookback - self.state['sim_period']:-self.state['sim_period']]
         else:
           # Shouldn't be possible, for now just output
           if DEBUG_OUTPUT:
@@ -847,6 +854,8 @@ class PortfolioLab:
         sigma = (sigma + sigma.T) / 2
         self.state['mu'] = mu.tolist()
         self.state['sigma'] = sigma.tolist()
+
+        self._update_desired_ret(None, None)
 
 
     def _build_long_only_portfolio(self, w_max=None):
