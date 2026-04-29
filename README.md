@@ -4,7 +4,6 @@ A portfolio allocation optimization app. Using a Markowitz portfolio optimizer t
 ## Table of Contents
 
 - [Installation](#installation)
-- [TODO](#TODO)
 
 ## Installation
 
